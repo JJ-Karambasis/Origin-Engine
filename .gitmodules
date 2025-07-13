@@ -1,0 +1,3 @@
+[submodule "code/third_party/base"]
+	path = code/third_party/base
+	url = https://github.com/JJ-Karambasis/base.git

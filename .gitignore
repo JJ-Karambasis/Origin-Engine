@@ -39,3 +39,12 @@
 
 # debug information files
 *.dwo
+
+/bin
+meta/
+*.DS_Store
+/.vscode
+*.10x
+*.rdbg
+*.shader
+imgui.ini
