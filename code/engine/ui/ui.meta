@@ -1,0 +1,79 @@
+META_MACRO(UI_STACK_ENTRY, type, name) {
+	META_STRUCT(ui_${name:lower}_entry) {
+		META_VARIABLE(${type}, Entry);
+		META_VARIABLE(ui_${name:lower}_entry*, Next);
+	}
+
+	META_STRUCT(ui_${name:lower}_stack) {
+		META_VARIABLE(ui_${name:lower}_entry*, First);
+		META_VARIABLE(b32, Autopop);
+	}
+
+	META_FUNCTION(UI_Has_${name:pascal}) -> b32 {
+		ui* UI = UI_Has_Begun();
+		return UI->Stack.${name}_Stack.First != NULL;
+	}
+
+	META_FUNCTION(UI_Get_${name:pascal}) -> ${type} {
+		Assert(UI_Has_${name:pascal}());
+		ui* UI = UI_Has_Begun();
+		return UI->Stack.${name}_Stack.First->Entry;
+	}
+
+	META_FUNCTION(UI_Pop_${name:pascal}) -> void {
+		Assert(UI_Has_${name:pascal}());
+		ui* UI = UI_Has_Begun();
+		SLL_Pop_Front(UI->Stack.${name}_Stack.First);
+	}
+
+	META_FUNCTION(UI_Push_${name:pascal}, ${type} Entry) -> void {
+		arena* BuildArena = UI_Build_Arena();
+		ui_${name:lower}_entry* StackEntry = Arena_Push_Struct(BuildArena, ui_${name:lower}_entry);
+		StackEntry->Entry = Entry;
+
+		ui* UI = UI_Has_Begun();
+		SLL_Push_Front(UI->Stack.${name}_Stack.First, StackEntry);
+	}
+
+	META_FUNCTION(UI_Set_Next_${name:pascal}, ${type} Entry) -> void {
+		UI_Push_${name:pascal}(Entry);
+		ui* UI = UI_Has_Begun();
+		UI->Stack.${name}_Stack.Autopop = true;
+	}
+
+	META_VARIABLE(ui_${name:lower}_stack, ${name}_Stack) Tags(name: ${name});
+}
+
+META_STRUCT(ui_stack) {
+	UI_STACK_ENTRY(ui_box*, Parent);
+	UI_STACK_ENTRY(v4, Background_Color);
+	UI_STACK_ENTRY(ui_axis, Layout_Axis);
+	UI_STACK_ENTRY(f32, Fixed_Width);
+	UI_STACK_ENTRY(f32, Fixed_Height);
+	UI_STACK_ENTRY(f32, Fixed_X);
+	UI_STACK_ENTRY(f32, Fixed_Y);
+	UI_STACK_ENTRY(ui_size, Pref_Width);
+	UI_STACK_ENTRY(ui_size, Pref_Height);
+	UI_STACK_ENTRY(ui_font, Font);
+	UI_STACK_ENTRY(v4, Text_Color);
+}
+
+META_FUNCTION(UI_Autopop_Stack) -> void {
+	ui* UI = UI_Get();
+	ui_stack* Stack = &UI->Stack;
+	META_FOR(ui_stack) {
+		if(Stack->${META_ENTRY_NAME}.Autopop) {
+			UI_Pop_${META_GET_TAG_VALUE(name)}();
+			Stack->${META_ENTRY_NAME}.Autopop = false;
+		}
+	}
+}
+
+META_FUNCTION(UI_Validate_Stack_) -> void {
+	ui* UI = UI_Get();
+	ui_stack* Stack = &UI->Stack;
+	META_FOR(ui_stack) {
+		Assert(!Stack->${META_ENTRY_NAME}.Autopop);
+		Assert(!Stack->${META_ENTRY_NAME}.First);
+	}
+}

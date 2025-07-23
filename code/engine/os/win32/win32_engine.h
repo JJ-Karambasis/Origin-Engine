@@ -3,6 +3,7 @@
 
 #include <engine.h>
 #include <dsound.h>
+#include <windowsx.h>
 
 #define WIN32_GAMEPAD_USAGE 5
 #define WIN32_JOYSTICK_USAGE 4
@@ -39,6 +40,7 @@ struct win32_engine : public engine {
 	win32_audio Audio;
 	win32_dll   EngineDLL;
 	HWND MainWindow;
+	job_id RootJob;
 };
 
 #endif

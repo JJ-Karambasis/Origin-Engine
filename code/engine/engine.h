@@ -8,8 +8,26 @@
 #include "renderer/renderer.h"
 
 #include "accumulator_loop.h"
+#include "camera.h"
+#include "font.h"
+#include "os/os_events.h"
+#include "ui/ui.h"
 
 struct engine;
+
+struct state {
+	b16 WasOn;
+	b16 IsOn;
+};
+
+inline b32 State_Turned_On(state* State) { return State->IsOn && !State->WasOn; }
+inline b32 State_Turned_Off(state* State) { return !State->IsOn && State->WasOn; }
+inline b32 State_Is_On(state* State) { return State->IsOn; }
+inline b32 State_Is_Off(state* State) { return !State->IsOn; }
+inline void State_Update(state* State) { State->WasOn = State->IsOn; }
+inline void State_Set(state* State, b16 CurrentState) { State->IsOn = CurrentState; }
+
+#include "input.h"
 
 #define ENGINE_FUNCTION_DEFINE(name) b32 name(engine* Engine)
 typedef ENGINE_FUNCTION_DEFINE(engine_func);
@@ -30,6 +48,16 @@ struct engine {
 	job_system*    JobSystem;
 	renderer       Renderer;
 	audio_manager  Audio;
+	input_manager  Input;
+	f32 		   UIScale;
+	atomic_b32 	   IsFocused;
+	font* 		   Font;
+	f64 		   dt;
+	os_tls* 	   UIThreadLocalStorage;
+
+	os_event_queue AppOSEvents;
+
+	camera Camera;
 
 	atomic_b32 IsRunning;
 };
@@ -65,5 +93,9 @@ function inline b32 Engine_Is_Running() {
 	engine* Engine = Get_Engine();
 	return Atomic_Load_B32(&Engine->IsRunning);
 }
+
+#define UI_Scale() Get_Engine()->UIScale
+#define Is_Focused() Atomic_Load_B32(&Get_Engine()->IsFocused)
+
 
 #endif

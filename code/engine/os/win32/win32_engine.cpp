@@ -2,11 +2,38 @@
 
 #include <accumulator_loop.cpp>
 
+#include <os/os_events.cpp>
+
 function inline win32_engine* Win32_Get() {
 	win32_engine* Result = (win32_engine*)Get_Engine();
 	Assert(Result);
 	return Result;
 }
+
+function inline v2 Win32_Get_Client_Dim(HWND Window) {
+	RECT Rect;
+	GetClientRect(Window, &Rect);
+	v2 Result = V2((f32)(Rect.right - Rect.left), (f32)(Rect.bottom - Rect.top));
+	return Result;
+}
+
+function keyboard_key Win32_Get_Keyboard_Key(int VKCode) {
+	switch (VKCode) {
+		case VK_CONTROL: return KEYBOARD_KEY_CTRL;
+		case VK_SHIFT: return KEYBOARD_KEY_SHIFT;
+		case VK_MENU: return KEYBOARD_KEY_ALT;
+		case VK_OEM_3: return KEYBOARD_KEY_BACKTICK;
+		case VK_LEFT: return KEYBOARD_KEY_LEFT;
+		case VK_RIGHT: return KEYBOARD_KEY_RIGHT;
+		case VK_UP: return KEYBOARD_KEY_UP;
+		case VK_DOWN: return KEYBOARD_KEY_DOWN;
+		case VK_DELETE: return KEYBOARD_KEY_DELETE;
+	}
+
+	if (VKCode < 256) return (keyboard_key)VKCode;
+	return (keyboard_key)-1;
+}
+
 
 function b32 Win32_DLL_Load(win32_dll* DLL) {
 	if (!OS_Copy_File(DLL->DLLPath, DLL->TmpDLLPath)) {
@@ -83,9 +110,108 @@ function inline void Win32_DLL_Finish_Waiting(win32_dll* DLL) {
 }
 
 function LRESULT Win32_Engine_Proc(HWND Window, UINT Message, WPARAM WParam, LPARAM LParam) {
+	win32_engine* Engine = Win32_Get();
+	
 	LRESULT Result = 0;
 	switch (Message) {
+		case WM_CHAR: {
+			u32 Codepoint = UTF16_Read((const wchar_t*)&WParam, NULL);
+			os_char_event Event = { .Codepoint = Codepoint };
+			OS_Add_Event(OS_EVENT_TYPE_CHAR, &Event);
+		} break;
+
+		case WM_SYSKEYUP:
+		case WM_SYSKEYDOWN:
+		case WM_KEYUP:
+		case WM_KEYDOWN: {
+			b32 WasDown = ((LParam & (1 << 30)) != 0);
+			b32 IsDown = ((LParam & (1UL << 31)) == 0);
+
+			if (IsDown != WasDown) {
+				keyboard_key Key = Win32_Get_Keyboard_Key((int)WParam);
+				if (Key != (keyboard_key)-1) {
+					os_event_type Type = IsDown ? OS_EVENT_TYPE_KEYBOARD_DOWN : OS_EVENT_TYPE_KEYBOARD_UP;
+					os_keyboard_event Event = { .Key = Key };
+					OS_Add_Event(Type, &Event);
+				}
+			}
+		} break;
+
+		case WM_LBUTTONDOWN:
+		case WM_LBUTTONUP:
+		case WM_RBUTTONDOWN:
+		case WM_RBUTTONUP:
+		case WM_MBUTTONDOWN:
+		case WM_MBUTTONUP: {
+			os_event_type Type = (Message == WM_LBUTTONDOWN || Message == WM_RBUTTONDOWN || Message == WM_MBUTTONDOWN) ? OS_EVENT_TYPE_MOUSE_DOWN : OS_EVENT_TYPE_MOUSE_UP;
+			mouse_key Key = (Message == WM_LBUTTONUP || Message == WM_LBUTTONDOWN) ? MOUSE_KEY_LEFT : ((Message == WM_RBUTTONUP || Message == WM_RBUTTONDOWN) ? MOUSE_KEY_RIGHT : MOUSE_KEY_MIDDLE);
+			os_mouse_event Event = { .Key = Key };
+			OS_Add_Event(Type, &Event);
+		} break;
+
+		case WM_MOUSEWHEEL: {
+			f32 Delta = (f32)GET_WHEEL_DELTA_WPARAM(WParam) / (f32)WHEEL_DELTA;
+			os_mouse_scroll_event Event = { .Delta = Delta };
+			OS_Add_Event(OS_EVENT_TYPE_MOUSE_SCROLL, &Event);
+		} break;
+
+		case WM_INPUT: {
+			arena* Scratch = Scratch_Get();
+
+			UINT DataSize;
+			GetRawInputData((HRAWINPUT)LParam, RID_INPUT, NULL, &DataSize, sizeof(RAWINPUTHEADER));
+
+			RAWINPUT* RawInput = (RAWINPUT*)Arena_Push(Scratch, DataSize);
+			GetRawInputData((HRAWINPUT)LParam, RID_INPUT, RawInput, &DataSize, sizeof(RAWINPUTHEADER));
+
+			switch (RawInput->header.dwType) {
+				case RIM_TYPEMOUSE: {
+					RAWMOUSE* Mouse = &RawInput->data.mouse;
+					if (Mouse->lLastX != 0 || Mouse->lLastY != 0) {
+						v2 Delta = V2((f32)Mouse->lLastX, (f32)-Mouse->lLastY);
+						os_mouse_move_event Event = { .Delta = Delta };
+						OS_Add_Event(OS_EVENT_TYPE_MOUSE_DELTA, &Event);
+					}
+				} break;
+			}
+			Scratch_Release();
+		} break;
+
+		case WM_MOUSEMOVE: {
+			v2 Resolution = Win32_Get_Client_Dim(Window);
+
+			v2 MousePosition = V2((f32)GET_X_LPARAM(LParam), (f32)GET_Y_LPARAM(LParam));
+			os_mouse_move_event Event = { .P = MousePosition };
+			OS_Add_Event(OS_EVENT_TYPE_MOUSE_MOVE, &Event);
+		} break;
+
+		case WM_DPICHANGED: {
+			UINT NewDPI = HIWORD(WParam);
+			Engine->UIScale = (f32)NewDPI / 96.0f;
+		} break;
+
+		case WM_ACTIVATE: {
+			b32 IsFocused = (LOWORD(WParam) != WA_INACTIVE);
+			Atomic_Store_B32(&Engine->IsFocused, IsFocused);
+		} break;
+
+		case WM_SETFOCUS: {
+			Atomic_Store_B32(&Engine->IsFocused, true);
+		} break;
+
+		case WM_KILLFOCUS: {
+			Atomic_Store_B32(&Engine->IsFocused, false);
+		} break;
+
+		case WM_SHOWWINDOW: {
+			if (!WParam) { // Window being hidden
+				Atomic_Store_B32(&Engine->IsFocused, false);
+			}
+		} break;
+
 		case WM_CLOSE: {
+			Engine_Shutdown(Engine);
+			Job_System_Wait_For_Job(Engine->JobSystem, Engine->RootJob);
 			DestroyWindow(Window);
 		} break;
 
@@ -113,7 +239,7 @@ function void Win32_Sound_Buffer_Clear(win32_audio* Audio) {
     }
 }
 
-function JOB_CALLBACK_DEFINE(Win32_Audio_Sample_Audio_Job) {
+function JOB_CALLBACK_DEFINE(Win32_Sample_Audio_Job) {
 	win32_engine* Engine = Win32_Get();
 	win32_audio* Audio = &Engine->Audio;
 
@@ -214,7 +340,6 @@ function JOB_CALLBACK_DEFINE(Win32_Audio_Sample_Audio_Job) {
 	Audio->LastWriteCursor = WriteCursor;
 }
 
-
 function JOB_CALLBACK_DEFINE(Win32_Audio_Job) {
 	win32_engine* Engine = Win32_Get();
 	win32_audio* Audio = &Engine->Audio;
@@ -248,7 +373,7 @@ function JOB_CALLBACK_DEFINE(Win32_Audio_Job) {
 	DWORD Flags = 0;
 
 #ifdef DEBUG_BUILD
-	//Flags |= DSBCAPS_GLOBALFOCUS;
+	Flags |= DSBCAPS_GLOBALFOCUS;
 #endif
 
 	DSBUFFERDESC SecondaryBufferDesc = {
@@ -282,7 +407,7 @@ function JOB_CALLBACK_DEFINE(Win32_Audio_Job) {
 			
 				job_id ParentJob = Job_System_Alloc_Empty_Job(JobSystem, JOB_FLAG_FREE_WHEN_DONE_BIT);
 				
-				job_data SampleAudioJobData = { Win32_Audio_Sample_Audio_Job };
+				job_data SampleAudioJobData = { Win32_Sample_Audio_Job };
 				job_id SampleAudioJob = Job_System_Alloc_Job(JobSystem, SampleAudioJobData, ParentJob, JOB_FLAG_FREE_WHEN_DONE_BIT | JOB_FLAG_QUEUE_IMMEDIATELY_BIT);
 
 				Job_System_Add_Job(JobSystem, ParentJob);
@@ -290,12 +415,51 @@ function JOB_CALLBACK_DEFINE(Win32_Audio_Job) {
 			}
 		} else {
 			//Execute other jobs in the meantime
-			//Job_System_Process_One_Job_And_Yield(JobSystem);
+			Job_System_Process_One_Job_And_Yield(JobSystem);
 		}
 	}
 }
 
+function JOB_CALLBACK_DEFINE(Win32_Engine_Update_Job) {
+	win32_engine* Engine = Win32_Get();
+	
+	Engine_Update(Engine);
+}
+
+function JOB_CALLBACK_DEFINE(Win32_Engine_Job) {
+	win32_engine* Engine = Win32_Get();
+	
+	u64 StartCounter = OS_Query_Performance_Counter();
+	u64 Frequency = OS_Query_Performance_Frequency();
+	while (Engine_Is_Running()) {
+		u64 LastCounter = OS_Query_Performance_Counter();
+		u64 DeltaHz = LastCounter - StartCounter;
+		Engine->dt = (f64)DeltaHz / (f64)Frequency;
+		StartCounter = LastCounter;
+		Debug_Log("fps: %f", 1.0f / Engine->dt);
+
+		if (Win32_DLL_Check_Reload(&Engine->EngineDLL)) {
+			engine_func* Engine_Reload = (engine_func*)Engine->EngineDLL.Functions[1];
+			Engine_Reload(Engine);
+			Win32_DLL_Finish_Reload(&Engine->EngineDLL);
+		}
+
+		job_id ParentJob = Job_System_Alloc_Empty_Job(JobSystem, JOB_FLAG_FREE_WHEN_DONE_BIT);
+		
+		job_data EngineUpdateJobData = { Win32_Engine_Update_Job };
+		job_id EngineUpdateJob = Job_System_Alloc_Job(JobSystem, EngineUpdateJobData, ParentJob, JOB_FLAG_FREE_WHEN_DONE_BIT | JOB_FLAG_QUEUE_IMMEDIATELY_BIT);
+
+		Job_System_Add_Job(JobSystem, ParentJob);
+		Job_System_Wait_For_Job(JobSystem, ParentJob);
+	}
+}
+
+#ifdef USE_CONSOLE
 int WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine, int ShowCmd) {
+#else
+int main() {
+	HINSTANCE Instance = GetModuleHandleW(NULL);
+#endif
 	Base_Init();
 
 	win32_engine Win32Engine = {};
@@ -303,6 +467,22 @@ int WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine, int ShowC
 	Set_Engine(&Win32Engine);
 
 	Win32Engine.Arena = Arena_Create();
+	Win32Engine.AppOSEvents.Lock = OS_Mutex_Create();
+
+	SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+
+	RAWINPUTDEVICE RawInputDevices[] = {
+		{
+			.usUsagePage = WIN32_USAGE_PAGE,
+			.usUsage = WIN32_MOUSE_USAGE,
+		}
+	};
+
+	if (!RegisterRawInputDevices(RawInputDevices, Array_Count(RawInputDevices), sizeof(RAWINPUTDEVICE))) {
+		MessageBoxW(NULL, L"Could not register raw input devices", L"Error", MB_OK);
+		return 1;
+	}
+
 
 	WNDCLASSEXW WindowClassEx = {
 		.cbSize = sizeof(WNDCLASSEXW),
@@ -326,6 +506,9 @@ int WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine, int ShowC
 	}
 
 	Win32Engine.Renderer.GDI = GDI;
+	UINT DPI = GetDpiForWindow(Win32Engine.MainWindow);
+
+	Win32Engine.UIScale = (f32)DPI / 96.0f;
 
 	{
 		arena* Scratch = Scratch_Get();
@@ -346,39 +529,25 @@ int WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine, int ShowC
 		return 1;
 	}
 
-	job_id ParentJob = Job_System_Alloc_Empty_Job(Win32Engine.JobSystem, JOB_FLAG_FREE_WHEN_DONE_BIT);
+	Atomic_Store_B32(&Win32Engine.IsFocused, GetForegroundWindow() == Win32Engine.MainWindow);
+
+	Win32Engine.RootJob = Job_System_Alloc_Empty_Job(Win32Engine.JobSystem, JOB_FLAG_FREE_WHEN_DONE_BIT);
 	
 	job_data AudioJobData = { Win32_Audio_Job };
-	job_id AudioJob = Job_System_Alloc_Job(Win32Engine.JobSystem, AudioJobData, ParentJob, JOB_FLAG_FREE_WHEN_DONE_BIT | JOB_FLAG_QUEUE_IMMEDIATELY_BIT);
+	job_id AudioJob = Job_System_Alloc_Job(Win32Engine.JobSystem, AudioJobData, Win32Engine.RootJob, JOB_FLAG_FREE_WHEN_DONE_BIT | JOB_FLAG_QUEUE_IMMEDIATELY_BIT);
 
-	Job_System_Add_Job(Win32Engine.JobSystem, ParentJob);
+	job_data EngineJobData = { Win32_Engine_Job };
+	job_id EngineJob = Job_System_Alloc_Job(Win32Engine.JobSystem, EngineJobData, Win32Engine.RootJob, JOB_FLAG_FREE_WHEN_DONE_BIT | JOB_FLAG_QUEUE_IMMEDIATELY_BIT);
 
-	for (;;) {
-		if (Win32_DLL_Check_Reload(&Win32Engine.EngineDLL)) {
-			engine_func* Engine_Reload = (engine_func*)Win32Engine.EngineDLL.Functions[1];
-			Engine_Reload(&Win32Engine);
-			Win32_DLL_Finish_Reload(&Win32Engine.EngineDLL);
-		}
+	Job_System_Add_Job(Win32Engine.JobSystem, Win32Engine.RootJob);
 
-		MSG Message;
-		while (PeekMessageW(&Message, NULL, 0, 0, PM_REMOVE)) {
-			switch (Message.message) {
-				case WM_QUIT: {
-					Engine_Stop_Running();
-					Job_System_Wait_For_Job(Win32Engine.JobSystem, ParentJob);
-					Engine_Shutdown(&Win32Engine);
-					return 0;
-				} break;
-
-				default: {
-					TranslateMessage(&Message);
-					DispatchMessageW(&Message);
-				} break;
-			}
-		}
-
-		Engine_Update(&Win32Engine);
+	MSG Message;
+	while (GetMessageW(&Message, NULL, 0, 0)) {
+		TranslateMessage(&Message);
+		DispatchMessageW(&Message);
 	}
+
+	return 0;
 }
 
 #pragma comment(lib, "base.lib")

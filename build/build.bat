@@ -2,15 +2,42 @@
 
 set build_debug=1
 set build_clang=0
+set build_shaders=1
 
 set build_path=%~dp0
 set base_path=%build_path%\..
 set code_path=%base_path%\code
 set shader_path=%code_path%\shaders
 set bin_path=%base_path%\bin
+set data_path=%base_path%\data
 
-set dxc_path=%VULKAN_SDK%\bin
-echo %dxc_path%
+if %build_shaders% == 0 (
+	goto skip_shaders
+)
+
+set dxc_path=%VULKAN_SDK%\bin\dxc.exe
+if not exist %data_path%\shaders (
+	mkdir %data_path%\shaders
+)
+
+set hlsl_optimized_flags=-O3
+if %build_debug% == 1 (
+	set hlsl_optimized_flags=-Od
+)
+set hlsl_flags=-spirv -Zi -Qembed_debug %hlsl_optimized_flags%
+
+set hlsl_vtx_flags=-T vs_6_0 -E VS_Main -fvk-invert-y %hlsl_flags%
+set hlsl_pxl_flags=-T ps_6_0 -E PS_Main %hlsl_flags%
+
+pushd %data_path%\shaders
+	%dxc_path% %hlsl_vtx_flags% %shader_path%\basic_shader.hlsl -Fo basic_shader_vtx.shader
+	%dxc_path% %hlsl_pxl_flags% %shader_path%\basic_shader.hlsl -Fo basic_shader_pxl.shader
+
+	%dxc_path% %hlsl_vtx_flags% %shader_path%\ui.hlsl -Fo ui_vtx.shader
+	%dxc_path% %hlsl_pxl_flags% %shader_path%\ui.hlsl -Fo ui_pxl.shader
+popd
+
+:skip_shaders
 
 set parameters=-bin_path %bin_path% -cpp
 if %build_debug% == 1 (
@@ -20,7 +47,7 @@ if %build_debug% == 1 (
 call %code_path%\third_party\base\build.bat %parameters%
 
 set app_includes=-I%code_path%\third_party\base\code -I%code_path%\engine -I%code_path%\third_party\stb
-set app_defines=
+set app_defines=-DUSE_CONSOLE
 
 if %build_debug% == 1 (
 	set app_defines=-DDEBUG_BUILD
@@ -33,7 +60,7 @@ if %build_debug% == 0 (
 
 set msvc_dll=-LD
 set msvc_compile_only=/c
-set msvc_warnings=/Wall /WX /wd4061 /wd4062 /wd4065 /wd4100 /wd4189 /wd4201 /wd4365 /wd4388 /wd4505 /wd4577 /wd4625 /wd4626 /wd4668 /wd4711 /wd4820 /wd5026 /wd5027 /wd5045 /wd5246 /wd5262
+set msvc_warnings=/Wall /WX /wd4061 /wd4062 /wd4065 /wd4100 /wd4189 /wd4201 /wd4242 /wd4244 /wd4245 /wd4267 /wd4334 /wd4365 /wd4388 /wd4456 /wd4457 /wd4505 /wd4577 /wd4625 /wd4626 /wd4668 /wd4701 /wd4711 /wd4820 /wd5219 /wd5026 /wd5027 /wd5045 /wd5246 /wd5262
 set msvc_flags=/nologo /FC /Z7 %msvc_optimized_flag%
 set msvc_out=/out:
 set msvc_link=/link /opt:ref /incremental:no
