@@ -12,12 +12,8 @@ struct vs_output {
 	v4 C  : COLOR0;
 };
 
-struct shader_data {
-	v2 InvResolution;
-};
-
 [[vk::push_constant]]
-ConstantBuffer<shader_data> ShaderData : register(b0, space0);
+ConstantBuffer<ui_shader_data> ShaderData : register(b0, space0);
 
 Texture2D Texture : register(t0, space0);
 SamplerState Sampler : register(s1, space0);

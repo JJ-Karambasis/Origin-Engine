@@ -2,12 +2,73 @@ function renderer* Renderer_Get() {
 	return &Get_Engine()->Renderer;
 }
 
-function gfx_component_id Create_GFX_Component(m4_affine Transform, v4 Color) {
+function gfx_mesh* Create_GFX_Mesh(editable_mesh* EditableMesh, string DebugName) {
+	Assert(Editable_Mesh_Has_Position(EditableMesh));
+	
+	arena* Scratch = Scratch_Get();
+	renderer* Renderer = Renderer_Get();
+	gfx_mesh* Mesh = (gfx_mesh*)Arena_Push(Renderer->Arena, sizeof(gfx_mesh)+(EditableMesh->PartCount*sizeof(mesh_part)));
+
+	gdi_buffer_create_info VtxBufferInfo = {
+		.Size = EditableMesh->VertexCount*sizeof(v3),
+		.Usage = GDI_BUFFER_USAGE_VTX_BUFFER,
+		.InitialData = Make_Buffer(EditableMesh->Positions, EditableMesh->VertexCount*sizeof(v3)),
+		.DebugName = String_Concat((allocator*)Scratch, DebugName, String_Lit("_VtxBuffer"))
+	};
+
+	gdi_buffer_create_info IdxBufferInfo = {
+		.Size = EditableMesh->IndexCount*sizeof(u32),
+		.Usage = GDI_BUFFER_USAGE_IDX_BUFFER,
+		.InitialData = Make_Buffer(EditableMesh->Indices, EditableMesh->IndexCount*sizeof(u32)),
+		.DebugName = String_Concat((allocator*)Scratch, DebugName, String_Lit("_IdxBuffer"))
+	};
+			
+	Mesh->VtxBuffer = GDI_Create_Buffer(&VtxBufferInfo);
+	Mesh->IdxBuffer = GDI_Create_Buffer(&IdxBufferInfo);
+	Scratch_Release();
+
+	Mesh->VtxCount = EditableMesh->VertexCount;
+	Mesh->IdxCount = EditableMesh->IndexCount;
+	Mesh->Parts = (mesh_part*)(Mesh + 1);
+	Mesh->PartCount = EditableMesh->PartCount;
+	Memory_Copy(Mesh->Parts, EditableMesh->Parts, sizeof(mesh_part)*EditableMesh->PartCount);
+	return Mesh;
+}
+
+function gfx_component_id Create_GFX_Component(m4_affine Transform, v4 Color, string MeshName) {
 	renderer* Renderer = Renderer_Get();
 	gfx_component_id ID = Pool_Allocate(&Renderer->GfxComponents);
 	gfx_component* Component = (gfx_component*)Pool_Get(&Renderer->GfxComponents, ID);
 	Component->Transform = Transform;
 	Component->Color = Color;
+
+	u64 Hash = U64_Hash_String(MeshName);
+	u64 SlotIndex = (Hash & MESH_SLOT_MASK);
+	gfx_mesh_slot* Slot = Renderer->MeshSlots + SlotIndex;
+	gfx_mesh* Mesh = NULL;
+	for (gfx_mesh* HashMesh = Slot->First; HashMesh; HashMesh = HashMesh->Next) {
+		if (HashMesh->Hash == Hash) {
+			Mesh = HashMesh;
+			break;
+		}
+	}
+
+	if (!Mesh) {
+		arena* Scratch = Scratch_Get();
+		string FilePath = String_Format((allocator*)Scratch, "meshes/%.*s.fbx", MeshName.Size, MeshName.Ptr);
+		editable_mesh* EditableMesh = Create_Editable_Mesh_From_File(FilePath);
+
+		if (EditableMesh) {
+			Mesh = Create_GFX_Mesh(EditableMesh, MeshName);
+			Mesh->Hash = Hash;
+			DLL_Push_Back(Slot->First, Slot->Last, Mesh);
+			Delete_Editable_Mesh(EditableMesh);
+		}
+		Scratch_Release();
+	}
+
+	Component->Mesh = Mesh;
+
 	return ID;
 }
 
@@ -15,6 +76,7 @@ function gfx_texture_id Create_GFX_Texture(const gfx_texture_create_info* Create
 	arena* Scratch = Scratch_Get();
 	
 	renderer* Renderer = Renderer_Get();
+
 	gfx_texture_id ID = Pool_Allocate(&Renderer->GfxTextures);
 	gfx_texture* Texture = (gfx_texture*)Pool_Get(&Renderer->GfxTextures, ID);
 	gdi_handle Sampler = GDI_Is_Null(CreateInfo->Sampler) ? Renderer->DefaultSampler : CreateInfo->Sampler;
@@ -98,7 +160,7 @@ function void Draw_Text(gdi_render_pass* RenderPass, font* Font, v2 PixelP, f32 
 		if (Texture) {
 			v2 P = V2(PixelP.x+Glyph->Offset.x, PixelP.y+Ascent+Glyph->Offset.y);
 			Render_Set_Bind_Group(RenderPass, 0, Texture->BindGroup);
-			IM_Push_Rect2D_UV_Norm(P, V2_Add_V2(P, Glyph->Dim), Color);
+			IM_Push_Rect2D_Color_UV_Norm(P, V2_Add_V2(P, Glyph->Dim), Color);
 			IM_Flush(RenderPass);
 		}
 
@@ -131,7 +193,7 @@ function void Draw_UI_Box(gdi_render_pass* RenderPass, ui* UI, ui_box* Box) {
 
 	BackgroundColor.xyz = V3_Mul_S(BackgroundColor.xyz, BackgroundColor.w);
 
-	IM_Push_Rect2D_UV_Norm(Box->Rect.p0, Box->Rect.p1, BackgroundColor);
+	IM_Push_Rect2D_Color_UV_Norm(Box->Rect.p0, Box->Rect.p1, BackgroundColor);
 	IM_Flush(RenderPass);
 
 	if (Box->Flags & UI_BOX_FLAG_DRAW_TEXT) {
@@ -149,7 +211,14 @@ function void Draw_UI(gdi_render_pass* RenderPass, ui* UI) {
 	Draw_UI_Box(RenderPass, UI, UI->Root);
 }
 
+function void Draw_Mesh(gdi_render_pass* RenderPass, gfx_mesh* Mesh) {
+	Render_Set_Vtx_Buffer(RenderPass, 0, Mesh->VtxBuffer);
+	Render_Set_Idx_Buffer(RenderPass, Mesh->IdxBuffer, GDI_IDX_FORMAT_32_BIT);
+	Render_Draw_Idx(RenderPass, Mesh->IdxCount, 0, 0);
+}
+
 function b32 Renderer_Init(renderer* Renderer) {
+	Renderer->Arena = Arena_Create();
 	Renderer->GfxComponents = Pool_Init(sizeof(gfx_component));
 	Renderer->GfxTextures = Pool_Init(sizeof(gfx_texture));
 
@@ -185,17 +254,17 @@ function b32 Renderer_Init(renderer* Renderer) {
 		buffer PSCode = Read_Entire_File((allocator*)Scratch, String_Lit("shaders/basic_shader_pxl.shader"));
 
 		gdi_vtx_attribute Attributes[] = {
-			{ .Semantic = String_Lit("POSITION"), .Format = GDI_FORMAT_R32G32B32_FLOAT },
-			{ .Semantic = String_Lit("COLOR"), .Format = GDI_FORMAT_R32G32B32A32_FLOAT }
+			{ .Semantic = String_Lit("POSITION"), .Format = GDI_FORMAT_R32G32B32_FLOAT }
 		};
 
 		gdi_vtx_binding VtxBindings[] = {
-			{ .Stride = sizeof(im_vtx_v3_c), .Attributes = { .Ptr = Attributes, .Count = Array_Count(Attributes) } }
+			{ .Stride = sizeof(v3), .Attributes = { .Ptr = Attributes, .Count = Array_Count(Attributes) } }
 		};
 
 		gdi_shader_create_info ShaderCreateInfo = {
 			.VS = VSCode,
 			.PS = PSCode,
+			.PushConstantCount = sizeof(basic_shader_data)/sizeof(u32),
 			.VtxBindings = { .Ptr = VtxBindings, .Count = Array_Count(VtxBindings) },
 			.RenderTargetFormats = { GDI_Get_View_Format() },
 			.DepthState = {
@@ -209,6 +278,10 @@ function b32 Renderer_Init(renderer* Renderer) {
 
 		Renderer->BasicShader = GDI_Create_Shader(&ShaderCreateInfo);
 		if (GDI_Is_Null(Renderer->BasicShader)) return false;
+
+		ShaderCreateInfo.Primitive = GDI_PRIMITIVE_LINE;
+		ShaderCreateInfo.DebugName = String_Lit("Basic Line Shader");
+		Renderer->BasicLineShader = GDI_Create_Shader(&ShaderCreateInfo);
 
 		Scratch_Release();
 	}
@@ -237,7 +310,7 @@ function b32 Renderer_Init(renderer* Renderer) {
 			.VS = VSCode,
 			.PS = PSCode,
 			.BindGroupLayouts = { .Ptr = &Renderer->TextureBindGroupLayout, .Count = 1 },
-			.PushConstantCount = 2,
+			.PushConstantCount = sizeof(ui_shader_data)/sizeof(u32),
 			.VtxBindings = { .Ptr = VtxBindings, .Count = Array_Count(VtxBindings) },
 			.RenderTargetFormats = { GDI_Get_View_Format() },
 			.BlendStates = { .Ptr = BlendStates, .Count = Array_Count(BlendStates) },
@@ -249,9 +322,6 @@ function b32 Renderer_Init(renderer* Renderer) {
 
 		Scratch_Release();
 	}
-
-	Create_GFX_Component(M4_Affine_Transform_Quat_No_Scale(V3(0.5f, -0.5f, 0.0f), Quat_Identity()), V4(0.0f, 1.0f, 0.0f, 1.0f));
-	Create_GFX_Component(M4_Affine_Transform_Quat_No_Scale(V3(0.0f, 0.0f, -2.5f), Quat_Identity()), V4(0.0f, 0.0f, 1.0f, 1.0f));
 
 	{
 		u32 TexelData[] = { 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF };
@@ -310,7 +380,7 @@ function b32 Render_Frame(renderer* Renderer, camera* CameraView) {
 			.DepthBufferView = Renderer->DepthView,
 			.ClearState = {
 				.ShouldClear = true,
-				.ClearColor = { { .F32 = { 1, 0, 0, 1 } }  },
+				.ClearColor = { { .F32 = { 0, 0, 0, 1 } }  },
 				.ClearDepth = 1.0f
 			}
 		};
@@ -320,25 +390,18 @@ function b32 Render_Frame(renderer* Renderer, camera* CameraView) {
 
 		for (pool_iter Iter = Pool_Begin_Iter(&Renderer->GfxComponents); Iter.IsValid; Pool_Iter_Next(&Iter)) {
 			gfx_component* Component = (gfx_component*)Iter.Data;
-		
-			v4 P0 = V4(-0.5f, -0.5f, 0.0f, 1.0f);
-			v4 P1 = V4(0.5f, -0.5f, 0.0f, 1.0f);
-			v4 P2 = V4(0.0f,  0.5f, 0.0f, 1.0f);
 
 			m4 ModelToClip = M4_Affine_Mul_M4(&Component->Transform, &WorldToClip);
 
-			P0 = V4_Mul_M4(P0, &ModelToClip);
-			P1 = V4_Mul_M4(P1, &ModelToClip);
-			P2 = V4_Mul_M4(P2, &ModelToClip);
-		
-			v3 V0 = V3_Div_S(P0.xyz, P0.w);
-			v3 V1 = V3_Div_S(P1.xyz, P1.w);
-			v3 V2 = V3_Div_S(P2.xyz, P2.w);
+			basic_shader_data ShaderData = {
+				.ModelToClip = ModelToClip,
+				.C = Component->Color
+			};
 
-			IM_Push_Triangle3D(V0, V1, V2, Component->Color);
+			Render_Set_Push_Constants(RenderPass, &ShaderData, sizeof(ShaderData));
+			Draw_Mesh(RenderPass, Component->Mesh);
 		}
 
-		IM_Flush(RenderPass);
 		GDI_End_Render_Pass(RenderPass);
 		GDI_Submit_Render_Pass(RenderPass);
 	}
@@ -347,12 +410,12 @@ function b32 Render_Frame(renderer* Renderer, camera* CameraView) {
 		gdi_render_pass_begin_info RenderPassInfo = { .RenderTargetViews = { GDI_Get_View() } };
 		gdi_render_pass* RenderPass = GDI_Begin_Render_Pass(&RenderPassInfo);
 
-		v2 InvResolution = V2(1.0f / ViewDim.x, 1.0f / ViewDim.y);
+		ui_shader_data ShaderData = {
+			.InvResolution = V2(1.0f / ViewDim.x, 1.0f / ViewDim.y)
+		};
 
 		Render_Set_Shader(RenderPass, Renderer->UIShader);
-		Render_Set_Push_Constants(RenderPass, &InvResolution, sizeof(v2));
-
-		Draw_Text(RenderPass, Get_Engine()->Font, V2_Zero(), 30, V4_All(1.0f), String_Lit("Hello"));
+		Render_Set_Push_Constants(RenderPass, &ShaderData, sizeof(ui_shader_data));
 
 		Draw_UI(RenderPass, UI_Get());
 

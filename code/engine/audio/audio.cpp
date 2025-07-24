@@ -103,23 +103,31 @@ function void Play_Sound(string SoundName, sound_flags Flags, f32 Volume) {
 	sound_samples_slot* Slot = AudioManager->SamplesSlots + SlotIndex;
 
 	sound_samples* Samples = NULL;
+
+	OS_RW_Mutex_Read_Lock(AudioManager->SlotLock);
 	for (sound_samples* HashSamples = Slot->First; HashSamples; HashSamples->Next) {
 		if (HashSamples->Hash == Hash) {
 			Samples = HashSamples;
 			break;
 		}
 	}
+	OS_RW_Mutex_Read_Unlock(AudioManager->SlotLock);
 
 	if (!Samples) {
 		arena* Scratch = Scratch_Get();
 		string FilePath = String_Format((allocator*)Scratch, "audio/%.*s.ogg", SoundName.Size, SoundName.Ptr);
-		Samples = Load_Sound_From_File((allocator*)AudioManager->Arena, FilePath);
+		
+		//Use the default allocator since its thread safe
+		Samples = Load_Sound_From_File(Default_Allocator_Get(), FilePath);
 		Scratch_Release();
 
-		Samples->Hash = Hash;
 
 		if (Samples) {
+			Samples->Hash = Hash;
+
+			OS_RW_Mutex_Write_Lock(AudioManager->SlotLock);
 			DLL_Push_Back(Slot->First, Slot->Last, Samples);
+			OS_RW_Mutex_Write_Unlock(AudioManager->SlotLock);
 		}
 	}
 
@@ -138,6 +146,7 @@ function void Play_Simple_Sound(string SoundName) {
 
 function void Audio_Init(audio_manager* Manager) {
 	Manager->Arena = Arena_Create();
+	Manager->SlotLock = OS_RW_Mutex_Create();
 	Manager->AllocatingLock = OS_Mutex_Create();
 	Manager->QueueLock = OS_Mutex_Create();
 	Manager->Volume = 1.0f;

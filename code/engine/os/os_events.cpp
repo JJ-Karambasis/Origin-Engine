@@ -1,6 +1,6 @@
 function void OS_Add_Event(os_event_type Type, void* Data) {
 	engine* Engine = Get_Engine();
-	os_event_queue* Queues[] = { &Engine->AppOSEvents };
+	os_event_queue* Queues[] = { &Engine->UpdateOSEvents, &Engine->SimOSEvents };
 
 	for (u32 i = 0; i < Array_Count(Queues); i++) {
 		os_event_queue* Queue = Queues[i];

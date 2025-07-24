@@ -41,6 +41,8 @@ struct playing_sound {
 #define SOUND_SAMPLES_SLOT_MASK (MAX_SOUND_SAMPLES_SLOTS-1)
 struct audio_manager {
 	arena*  Arena;
+
+	os_rw_mutex* SlotLock;
 	sound_samples_slot SamplesSlots[MAX_SOUND_SAMPLES_SLOTS];
 	
 	os_mutex* AllocatingLock;

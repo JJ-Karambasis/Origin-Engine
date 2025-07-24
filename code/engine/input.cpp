@@ -1,6 +1,11 @@
+function void Set_Input_Thread(input_manager* InputManager) {
+	engine_thread_context* ThreadContext = Get_Engine_Thread_Context();
+	ThreadContext->InputManager = InputManager;
+}
+
 function inline input_manager* Input_Manager_Get() {
-	engine* Engine = Get_Engine();
-	return &Engine->Input;
+	engine_thread_context* ThreadContext = Get_Engine_Thread_Context();
+	return ThreadContext->InputManager;
 }
 
 function inline b32 Keyboard_Is_Pressed(u32 Key) {

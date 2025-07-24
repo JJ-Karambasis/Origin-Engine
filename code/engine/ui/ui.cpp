@@ -1,15 +1,14 @@
 function ui* UI_Get() {
 	engine* Engine = Get_Engine();
-	ui* UI = (ui*)OS_TLS_Get(Engine->UIThreadLocalStorage);
-	if (!UI) {
+	engine_thread_context* ThreadContext = Get_Engine_Thread_Context();
+	if (!ThreadContext->UI) {
 		arena* Arena = Arena_Create();
-		UI = Arena_Push_Struct(Arena, ui);
-		UI->Arena = Arena;
-		UI->BuildArenas[0] = Arena_Create(); 
-		UI->BuildArenas[1] = Arena_Create();
-		OS_TLS_Set(Engine->UIThreadLocalStorage, UI);
+		ThreadContext->UI = Arena_Push_Struct(Arena, ui);
+		ThreadContext->UI->Arena = Arena;
+		ThreadContext->UI->BuildArenas[0] = Arena_Create(); 
+		ThreadContext->UI->BuildArenas[1] = Arena_Create();
 	}
-	return UI;
+	return ThreadContext->UI;
 }
 
 function ui* UI_Has_Begun() {
@@ -27,6 +26,21 @@ function arena* UI_Build_Arena() {
 function ui_box_id UI_Box_ID_From_Identifier(string Identifier, ui_box_id Seed) {
 	ui_box_id Result = U64_Hash_String_With_Seed(Identifier, Seed);
 	return Result;
+}
+
+function ui_box* UI_Get_Last_Box() {
+	ui* UI = UI_Get();
+	return UI->LastBox;
+}
+
+function void UI_Set_Position_X(ui_box* Box, f32 Value) {
+	Box->Flags |= UI_BOX_FLAG_FLOATING_X;
+	Box->FixedP.x = Value;
+}
+
+function void UI_Set_Position_Y(ui_box* Box, f32 Value) {
+	Box->Flags |= UI_BOX_FLAG_FLOATING_Y;
+	Box->FixedP.y = Value;
 }
 
 function ui_box* UI_Make_Box(ui_box_flags Flags, ui_box_id ID) {
@@ -58,6 +72,7 @@ function ui_box* UI_Make_Box(ui_box_flags Flags, ui_box_id ID) {
 
 	Box->ID = ID;
 	Box->Flags = Flags;
+	Box->BuildIndex = UI->CurrentBuildIndex;
 
 	//Add to the hierarchy
 	if (UI_Has_Parent()) {
@@ -102,16 +117,16 @@ function ui_box* UI_Make_Box(ui_box_flags Flags, ui_box_id ID) {
 	}
 
 	if (UI_Has_Fixed_X()) {
-		Box->FixedP.x = UI_Get_Fixed_X();
-		Box->Flags |= UI_BOX_FLAG_FLOATING_X;
+		UI_Set_Position_X(Box, UI_Get_Fixed_X());
 	}
 
 	if (UI_Has_Fixed_Y()) {
-		Box->FixedP.y = UI_Get_Fixed_Y();
-		Box->Flags |= UI_BOX_FLAG_FLOATING_Y;
+		UI_Set_Position_Y(Box, UI_Get_Fixed_Y());
 	}
 
 	UI_Autopop_Stack();
+
+	UI->LastBox = Box;
 
 	return Box;
 }
@@ -171,6 +186,7 @@ function void UI_Begin(v2 ViewDim) {
 	ui* UI = UI_Get();
 	Assert(!UI->HasBegun);
 	UI->HasBegun = true;
+	UI->LastBox = NULL;
 
 	//Reset the hierarchy
 	for (u32 i = 0; i < UI_MAX_BOX_SLOTS; i++) {
@@ -228,7 +244,9 @@ function void UI_Layout_Position(ui_box* Box) {
 		Child->Rect.p0 = Child->FixedP;
 		Child->Rect.p1 = V2_Add_V2(Child->FixedP, Child->FixedDim);
 
-		P.Data[LayoutAxis] += Child->FixedDim.Data[LayoutAxis];
+		if (!(Child->Flags & (UI_BOX_FLAG_FLOATING_X << LayoutAxis))) {
+			P.Data[LayoutAxis] += Child->FixedDim.Data[LayoutAxis];
+		}
 	}
 
 	for (ui_box* Child = Box->FirstChild; Child; Child = Child->NextSibling) {
@@ -345,4 +363,5 @@ function void UI_End() {
 	UI->HasBegun = false;
 }
 
+#include "ui_widgets.cpp"
 #include "meta/ui_meta.c"

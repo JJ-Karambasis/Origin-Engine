@@ -97,6 +97,7 @@ struct ui {
 	u64    CurrentBuildIndex;
 	arena* BuildArenas[2];
 	
+	ui_box* 		 LastBox;
 	ui_box* 		 Root;
 	ui_box* 		 FreeBoxes;
 	ui_box_hash_slot BoxSlots[UI_MAX_BOX_SLOTS];

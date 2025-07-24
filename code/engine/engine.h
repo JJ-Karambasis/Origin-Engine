@@ -4,6 +4,7 @@
 #include <base.h>
 #include <meta_program/meta_defines.h>
 
+#include "mesh.h"
 #include "audio/audio.h"
 #include "renderer/renderer.h"
 
@@ -12,6 +13,8 @@
 #include "font.h"
 #include "os/os_events.h"
 #include "ui/ui.h"
+
+#define SIM_HZ (1.0/60.0)
 
 struct engine;
 
@@ -42,26 +45,39 @@ struct engine_vtable {
 	engine_func* 			  ShutdownFunc;
 };
 
+struct engine_thread_context {
+	ui* 		   UI;
+	input_manager* InputManager;
+};
+
 struct engine {
 	engine_vtable* VTable;
 	base* 		   Base;
 	job_system*    JobSystem;
 	renderer       Renderer;
 	audio_manager  Audio;
-	input_manager  Input;
+	input_manager  UpdateInput;
+	input_manager  SimInput;
 	f32 		   UIScale;
 	atomic_b32 	   IsFocused;
 	font* 		   Font;
 	f64 		   dt;
-	os_tls* 	   UIThreadLocalStorage;
+	os_tls* 	   ThreadLocalStorage;
 
-	os_event_queue AppOSEvents;
+	os_event_queue UpdateOSEvents;
+	os_event_queue SimOSEvents;
 
 	camera Camera;
+
+	gfx_mesh* DebugBoxLineMesh;
+	gfx_mesh* DebugSphereLineMesh;
+	gfx_mesh* DebugCapsuleLineMesh;
+	gfx_mesh* DebugSphereTriangleMesh;
 
 	atomic_b32 IsRunning;
 };
 
+#define Engine_Simulate(engine) (engine)->VTable->SimulateFunc(engine)
 #define Engine_Update(engine) (engine)->VTable->UpdateFunc(engine)
 #define Engine_Shutdown(engine) (engine)->VTable->ShutdownFunc(engine)
 #define Engine_Audio_Stream(engine, out_samples) (engine)->VTable->AudioStreamFunc(engine, out_samples)
@@ -77,6 +93,16 @@ function inline void Set_Engine(engine* Engine) {
 		Base_Set(Engine->Base);
 		GDI_Set(Engine->Renderer.GDI);
 	}
+}
+
+function inline engine_thread_context* Get_Engine_Thread_Context() {
+	engine* Engine = Get_Engine();
+	engine_thread_context* ThreadContext = (engine_thread_context*)OS_TLS_Get(Engine->ThreadLocalStorage);
+	if (!ThreadContext) {
+		ThreadContext = Allocator_Allocate_Struct(Default_Allocator_Get(), engine_thread_context);
+		OS_TLS_Set(Engine->ThreadLocalStorage, ThreadContext);
+	}
+	return ThreadContext;
 }
 
 function inline void Engine_Start_Running() {

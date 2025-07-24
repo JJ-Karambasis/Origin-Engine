@@ -417,16 +417,46 @@ function JOB_CALLBACK_DEFINE(Win32_Audio_Job) {
 			//Execute other jobs in the meantime
 			Job_System_Process_One_Job_And_Yield(JobSystem);
 		}
+
+		Thread_Context_Validate();
+	}
+}
+
+function JOB_CALLBACK_DEFINE(Win32_Engine_Sim_Job) {
+	win32_engine* Engine = Win32_Get();
+	Engine_Simulate(Engine);
+}
+
+function JOB_CALLBACK_DEFINE(Win32_Sim_Job) {
+	accumulator_loop SimAccumLoop = {};
+	Accumulator_Loop_Start(&SimAccumLoop, SIM_HZ);
+	while (Engine_Is_Running()) {
+		Accumulator_Loop_Increment(&SimAccumLoop);
+		if (Accumulator_Loop_Should_Update(&SimAccumLoop)) {
+			while (Accumulator_Loop_Update(&SimAccumLoop)) {
+				job_id ParentJob = Job_System_Alloc_Empty_Job(JobSystem, JOB_FLAG_FREE_WHEN_DONE_BIT);
+				
+				job_data SimJobData = { Win32_Engine_Sim_Job };
+				job_id SimAudioJob = Job_System_Alloc_Job(JobSystem, SimJobData, ParentJob, JOB_FLAG_FREE_WHEN_DONE_BIT | JOB_FLAG_QUEUE_IMMEDIATELY_BIT);
+
+				Job_System_Add_Job(JobSystem, ParentJob);
+				Job_System_Wait_For_Job(JobSystem, ParentJob);
+			}
+		} else {
+			//Execute other jobs in the meantime
+			Job_System_Process_One_Job_And_Yield(JobSystem);
+		}
+
+		Thread_Context_Validate();
 	}
 }
 
 function JOB_CALLBACK_DEFINE(Win32_Engine_Update_Job) {
 	win32_engine* Engine = Win32_Get();
-	
 	Engine_Update(Engine);
 }
 
-function JOB_CALLBACK_DEFINE(Win32_Engine_Job) {
+function JOB_CALLBACK_DEFINE(Win32_Update_Job) {
 	win32_engine* Engine = Win32_Get();
 	
 	u64 StartCounter = OS_Query_Performance_Counter();
@@ -451,6 +481,8 @@ function JOB_CALLBACK_DEFINE(Win32_Engine_Job) {
 
 		Job_System_Add_Job(JobSystem, ParentJob);
 		Job_System_Wait_For_Job(JobSystem, ParentJob);
+		
+		Thread_Context_Validate();
 	}
 }
 
@@ -467,7 +499,8 @@ int main() {
 	Set_Engine(&Win32Engine);
 
 	Win32Engine.Arena = Arena_Create();
-	Win32Engine.AppOSEvents.Lock = OS_Mutex_Create();
+	Win32Engine.UpdateOSEvents.Lock = OS_Mutex_Create();
+	Win32Engine.SimOSEvents.Lock = OS_Mutex_Create();
 
 	SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
@@ -534,10 +567,13 @@ int main() {
 	Win32Engine.RootJob = Job_System_Alloc_Empty_Job(Win32Engine.JobSystem, JOB_FLAG_FREE_WHEN_DONE_BIT);
 	
 	job_data AudioJobData = { Win32_Audio_Job };
-	job_id AudioJob = Job_System_Alloc_Job(Win32Engine.JobSystem, AudioJobData, Win32Engine.RootJob, JOB_FLAG_FREE_WHEN_DONE_BIT | JOB_FLAG_QUEUE_IMMEDIATELY_BIT);
+	Job_System_Alloc_Job(Win32Engine.JobSystem, AudioJobData, Win32Engine.RootJob, JOB_FLAG_FREE_WHEN_DONE_BIT | JOB_FLAG_QUEUE_IMMEDIATELY_BIT);
 
-	job_data EngineJobData = { Win32_Engine_Job };
-	job_id EngineJob = Job_System_Alloc_Job(Win32Engine.JobSystem, EngineJobData, Win32Engine.RootJob, JOB_FLAG_FREE_WHEN_DONE_BIT | JOB_FLAG_QUEUE_IMMEDIATELY_BIT);
+	job_data UpdateJobData = { Win32_Update_Job };
+	Job_System_Alloc_Job(Win32Engine.JobSystem, UpdateJobData, Win32Engine.RootJob, JOB_FLAG_FREE_WHEN_DONE_BIT | JOB_FLAG_QUEUE_IMMEDIATELY_BIT);
+
+	job_data SimJobData = { Win32_Sim_Job };
+	Job_System_Alloc_Job(Win32Engine.JobSystem, SimJobData, Win32Engine.RootJob, JOB_FLAG_FREE_WHEN_DONE_BIT | JOB_FLAG_QUEUE_IMMEDIATELY_BIT);
 
 	Job_System_Add_Job(Win32Engine.JobSystem, Win32Engine.RootJob);
 
@@ -545,6 +581,8 @@ int main() {
 	while (GetMessageW(&Message, NULL, 0, 0)) {
 		TranslateMessage(&Message);
 		DispatchMessageW(&Message);
+
+		Thread_Context_Validate();
 	}
 
 	return 0;

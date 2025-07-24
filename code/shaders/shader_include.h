@@ -5,5 +5,8 @@
 #define v3 float3
 #define v4 float4
 #define s32 int
+#define m4 float4x4
+
+#include "shader_data.h"
 
 #endif
