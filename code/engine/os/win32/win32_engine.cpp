@@ -428,19 +428,43 @@ function JOB_CALLBACK_DEFINE(Win32_Engine_Sim_Job) {
 }
 
 function JOB_CALLBACK_DEFINE(Win32_Sim_Job) {
+	engine* Engine = Get_Engine();
+
 	accumulator_loop SimAccumLoop = {};
+	b32 IsPaused = !Is_Simulating();
 	Accumulator_Loop_Start(&SimAccumLoop, SIM_HZ);
 	while (Engine_Is_Running()) {
 		Accumulator_Loop_Increment(&SimAccumLoop);
 		if (Accumulator_Loop_Should_Update(&SimAccumLoop)) {
 			while (Accumulator_Loop_Update(&SimAccumLoop)) {
-				job_id ParentJob = Job_System_Alloc_Empty_Job(JobSystem, JOB_FLAG_FREE_WHEN_DONE_BIT);
-				
-				job_data SimJobData = { Win32_Engine_Sim_Job };
-				job_id SimAudioJob = Job_System_Alloc_Job(JobSystem, SimJobData, ParentJob, JOB_FLAG_FREE_WHEN_DONE_BIT | JOB_FLAG_QUEUE_IMMEDIATELY_BIT);
+				if (IsPaused) {
+					Job_System_Process_One_Job(JobSystem);
 
-				Job_System_Add_Job(JobSystem, ParentJob);
-				Job_System_Wait_For_Job(JobSystem, ParentJob);
+					//We also need to consume all the simulation os events
+					//since we essentially turned them all off
+					OS_Consume_Events(&Engine->SimOSEvents);
+					Memory_Clear(&Engine->SimInput, sizeof(input_manager));
+					Engine->SimInput.MouseP = V2(FLT_MAX, FLT_MAX);
+
+					if (Is_Simulating()) {
+						IsPaused = false;
+					}
+				} else {
+					job_id ParentJob = Job_System_Alloc_Empty_Job(JobSystem, JOB_FLAG_FREE_WHEN_DONE_BIT);
+				
+					job_data SimJobData = { Win32_Engine_Sim_Job };
+					job_id SimAudioJob = Job_System_Alloc_Job(JobSystem, SimJobData, ParentJob, JOB_FLAG_FREE_WHEN_DONE_BIT | JOB_FLAG_QUEUE_IMMEDIATELY_BIT);
+
+					Job_System_Add_Job(JobSystem, ParentJob);
+					Job_System_Wait_For_Job(JobSystem, ParentJob);
+
+					if (!Is_Simulating()) {
+						//We signal to all threads waiting for simulations to pause
+						//using the event 
+						IsPaused = true;
+						OS_Event_Signal(Engine->SimWaitEvent);
+					}
+				}
 			}
 		} else {
 			//Execute other jobs in the meantime
@@ -466,7 +490,6 @@ function JOB_CALLBACK_DEFINE(Win32_Update_Job) {
 		u64 DeltaHz = LastCounter - StartCounter;
 		Engine->dt = (f64)DeltaHz / (f64)Frequency;
 		StartCounter = LastCounter;
-		Debug_Log("fps: %f", 1.0f / Engine->dt);
 
 		if (Win32_DLL_Check_Reload(&Engine->EngineDLL)) {
 			engine_func* Engine_Reload = (engine_func*)Engine->EngineDLL.Functions[1];

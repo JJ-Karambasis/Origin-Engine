@@ -55,3 +55,8 @@ function b32 OS_Get_Event(os_event_queue* Queue, os_event_entry* Event) {
 	OS_Mutex_Unlock(Queue->Lock);
 	return !IsEmpty;
 }
+
+function void OS_Consume_Events(os_event_queue* Queue) {
+	os_event_entry Event;
+	while (OS_Get_Event(Queue, &Event)) {} //Consume all events
+}

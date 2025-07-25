@@ -35,14 +35,10 @@ function gfx_mesh* Create_GFX_Mesh(editable_mesh* EditableMesh, string DebugName
 	return Mesh;
 }
 
-function gfx_component_id Create_GFX_Component(m4_affine Transform, v4 Color, string MeshName) {
+function gfx_component_id Create_GFX_Component(const gfx_component_create_info& CreateInfo) {
 	renderer* Renderer = Renderer_Get();
-	gfx_component_id ID = Pool_Allocate(&Renderer->GfxComponents);
-	gfx_component* Component = (gfx_component*)Pool_Get(&Renderer->GfxComponents, ID);
-	Component->Transform = Transform;
-	Component->Color = Color;
-
-	u64 Hash = U64_Hash_String(MeshName);
+	
+	u64 Hash = U64_Hash_String(CreateInfo.MeshName);
 	u64 SlotIndex = (Hash & MESH_SLOT_MASK);
 	gfx_mesh_slot* Slot = Renderer->MeshSlots + SlotIndex;
 	gfx_mesh* Mesh = NULL;
@@ -55,11 +51,11 @@ function gfx_component_id Create_GFX_Component(m4_affine Transform, v4 Color, st
 
 	if (!Mesh) {
 		arena* Scratch = Scratch_Get();
-		string FilePath = String_Format((allocator*)Scratch, "meshes/%.*s.fbx", MeshName.Size, MeshName.Ptr);
+		string FilePath = String_Format((allocator*)Scratch, "meshes/%.*s.fbx", CreateInfo.MeshName.Size, CreateInfo.MeshName.Ptr);
 		editable_mesh* EditableMesh = Create_Editable_Mesh_From_File(FilePath);
 
 		if (EditableMesh) {
-			Mesh = Create_GFX_Mesh(EditableMesh, MeshName);
+			Mesh = Create_GFX_Mesh(EditableMesh, CreateInfo.MeshName);
 			Mesh->Hash = Hash;
 			DLL_Push_Back(Slot->First, Slot->Last, Mesh);
 			Delete_Editable_Mesh(EditableMesh);
@@ -67,9 +63,25 @@ function gfx_component_id Create_GFX_Component(m4_affine Transform, v4 Color, st
 		Scratch_Release();
 	}
 
+	if (!Mesh) {
+		Debug_Log("Could not find mesh '%.*s'", CreateInfo.MeshName.Size, CreateInfo.MeshName.Ptr);
+		return Empty_Pool_ID();
+	}
+	
+	gfx_component_id ID = Pool_Allocate(&Renderer->GfxComponents);
+	gfx_component* Component = (gfx_component*)Pool_Get(&Renderer->GfxComponents, ID);
+	Component->Transform = CreateInfo.Transform;
+	Component->Color = CreateInfo.Color;
+
 	Component->Mesh = Mesh;
 
 	return ID;
+}
+
+function inline gfx_component* Get_GFX_Component(gfx_component_id ID) {
+	renderer* Renderer = Renderer_Get();
+	gfx_component* Result = (gfx_component*)Pool_Get(&Renderer->GfxComponents, ID);
+	return Result;
 }
 
 function gfx_texture_id Create_GFX_Texture(const gfx_texture_create_info* CreateInfo) {

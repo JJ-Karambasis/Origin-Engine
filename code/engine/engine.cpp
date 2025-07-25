@@ -7,12 +7,25 @@ Array_Implement(u32, U32);
 #include "camera.cpp"
 #include "font.cpp"
 #include "mesh.cpp"
+#include "world/world.cpp"
 #include "renderer/renderer.cpp"
 #include "audio/audio.cpp"
 
 #include "os/os_events.cpp"
 #include "input.cpp"
 #include "ui/ui.cpp"
+
+function void Pause_Simulation() {
+	engine* Engine = Get_Engine();
+	OS_Event_Reset(Engine->SimWaitEvent);
+	Atomic_Store_B32(&Engine->IsSimulating, false);
+	OS_Event_Wait(Engine->SimWaitEvent);
+}
+
+function void Resume_Simulation() {
+	engine* Engine = Get_Engine();
+	Atomic_Store_B32(&Engine->IsSimulating, true);
+}
 
 function void Process_OS_Events(os_event_queue* EventQueue) {
 	Input_Update();
@@ -51,64 +64,185 @@ function void Process_OS_Events(os_event_queue* EventQueue) {
 }
 
 function ENGINE_FUNCTION_DEFINE(Engine_Simulate_Impl) {
+	Sim_Begin_Frame();
+
 	Set_Input_Thread(&Engine->SimInput);
 	Input_Update();
 	Process_OS_Events(&Engine->SimOSEvents);
 
-	if (Keyboard_Is_Pressed('D')) {
-		Play_Sound(String_Lit("Bloop"), 0, 0.5f);
+	Sim_Process_Messages();
+
+	world* World = World_Get();
+
+	f32 dt = (f32)SIM_HZ;
+
+	sim_entity_storage* SimEntities = &World->SimEntities;
+	for (u32 i = 0; i < SimEntities->Capacity; i++) {
+		sim_entity* Entity = SimEntities->Entities + i;
+		if (Entity->Type == ENTITY_TYPE_PLAYER) {
+			v2 InputDirection = V2_Zero();
+
+			if (Keyboard_Is_Down('A')) {
+				InputDirection.x = -1.0f;
+			}
+			
+			if (Keyboard_Is_Down('D')) {
+				InputDirection.x = 1.0f;
+			}
+			
+			if (Keyboard_Is_Down('W')) {
+				InputDirection.y = 1.0f;
+			}
+
+			if (Keyboard_Is_Down('S')) {
+				InputDirection.y = -1.0f;
+			}
+
+			v2 Velocity = V2_Mul_S(V2_Norm(InputDirection), 1.5f * dt);
+			Entity->Position.xy = V2_Add_V2(Entity->Position.xy, Velocity);
+
+			Sim_Push_Entity(Entity);
+		}
 	}
+
+	Sim_End_Frame();
+
 	return true;
 }
 
+function void Sync_Simulation() {
+	engine* Engine = Get_Engine();
+
+	//Get the old frame and the new frame while locking to prevent the simulation
+	//from starting or finishing a frame while this occurs
+	OS_Mutex_Lock(Engine->SimFrameLock);
+	push_frame* OldFrame = NULL;
+	push_frame* NewFrame = NULL;
+	for (;;) {
+		b32 FreeFrame = false;
+
+		OldFrame = Engine->FirstFrame;
+		if (!OldFrame) break;
+
+		if (Time_Is_Newer(Engine->UpdateSimTime, OldFrame->Time)) {
+			push_frame* NextFrame = OldFrame->Next;
+			if (!NextFrame) {
+				break;
+			}
+
+			if (Time_Is_Newer(NextFrame->Time, Engine->UpdateSimTime)) {
+				NewFrame = NextFrame;
+				break;
+			}
+
+			SLL_Pop_Front(Engine->FirstFrame);
+			if (!Engine->FirstFrame) Engine->LastFrame = NULL;
+			OldFrame->Next = NULL;
+			SLL_Push_Front(Engine->FreeFrames, OldFrame);
+		} Invalid_Else;
+	}
+	OS_Mutex_Unlock(Engine->SimFrameLock);
+
+	//Set the new frame to let the update frame know if its still simulating or not
+
+	if (OldFrame) {
+
+		//If there is at least an old frame, update the entities with the old
+		//simulation frame to at least keep the rendering in sync and to assist
+		//in interpolation if there is a new frame
+
+		if (Is_Simulating() || NewFrame) {
+			for (size_t i = 0; i < OldFrame->CmdCount; i++) {
+				push_cmd* Cmd = OldFrame->Cmds + i;
+				entity* Entity = Get_Entity(Cmd->ID);
+				if (Entity) {
+					//Store old transforms in current transforms
+					Entity->Position = Cmd->Position;
+					Entity->Orientation = Cmd->Orientation;
+				}
+			}
+		} else {
+			for (pool_iter Iter = Pool_Begin_Iter(&Engine->World->Entities); Iter.IsValid; Pool_Iter_Next(&Iter)) {
+				entity* Entity = (entity*)Iter.Data;
+				if (Entity->ID.Index < Engine->World->SimEntities.Capacity) {
+					sim_entity* SimEntity = Engine->World->SimEntities.Entities + Entity->ID.Index;
+					if(SimEntity->IsAllocated) {
+						Entity->Position = SimEntity->Position;
+						Entity->Orientation = SimEntity->Orientation;
+					}
+				}
+			}
+		}
+
+		if (NewFrame) {
+			//If there is a new frame, interpolate between the two frames to get
+			//the entities actual position in the frame
+
+			Assert(Engine->UpdateSimTime.Interval == OldFrame->Time.Interval &&
+				(OldFrame->Time.Interval == NewFrame->Time.Interval ||
+				OldFrame->Time.Interval == NewFrame->Time.Interval - 1));
+		
+			f64 tAt = Engine->UpdateSimTime.dt - OldFrame->Time.dt;
+			f64 tInterp = tAt / SIM_HZ;
+
+			Assert(tInterp >= 0 && tInterp <= 1);
+
+			for (size_t i = 0; i < NewFrame->CmdCount; i++) {
+				push_cmd* Cmd = NewFrame->Cmds + i;
+				entity* Entity = Get_Entity(Cmd->ID);
+				if (Entity) {
+					Entity->Position = V3_Lerp(Entity->Position, (f32)tInterp, Cmd->Position);
+					Entity->Orientation = Quat_Lerp(Entity->Orientation, (f32)tInterp, Cmd->Orientation);
+				}
+			}
+		}
+
+		if (NewFrame) {
+			Time_Increment(&Engine->UpdateSimTime, Engine->dt);
+		}
+	}
+}
+
 function ENGINE_FUNCTION_DEFINE(Engine_Update_Impl) {
-	os_event_queue* OSEventQueue = &Engine->UpdateOSEvents;
 	Set_Input_Thread(&Engine->UpdateInput);
 	Input_Update();
 	Process_OS_Events(&Engine->UpdateOSEvents);
 
-	input_manager* InputManager = Input_Manager_Get();
+
+	Sync_Simulation();
 
 	f32 dt = (f32)Engine->dt;
 	camera* Camera = &Engine->Camera;
-	if (Mouse_Is_Down(MOUSE_KEY_MIDDLE)) {
-		v2 MouseDelta = InputManager->MouseDelta;
-		if (Keyboard_Is_Down(KEYBOARD_KEY_CTRL)) {
-			f32 Zoom = MouseDelta.y;
-			Camera->Distance = Max(Camera->Distance-(Zoom * dt * 10), 1e-4f);
-		} else if (Keyboard_Is_Down(KEYBOARD_KEY_SHIFT)) {
-			m3 Orientation = Camera_Get_Orientation(Camera);
-			Camera->Target = V3_Add_V3(Camera->Target, V3_Mul_S(Orientation.x, MouseDelta.x * dt * 1.5f));
-			Camera->Target = V3_Add_V3(Camera->Target, V3_Mul_S(Orientation.y, MouseDelta.y * dt * 1.5f));
-		} else {
-			Camera->Pitch += MouseDelta.y * dt;
-			Camera->Roll += MouseDelta.x * dt;
-		}
-	}
-
-	if (InputManager->MouseZoom != 0) {
-		Camera->Distance = Max(Camera->Distance-(InputManager->MouseZoom * dt * 100), 1e-4f);
-	}
-
-	if (Keyboard_Is_Pressed('A')) {
-		Play_Sound(String_Lit("Bloop"), 0, 0.5f);
-	}
+	Camera_Move_Arcball(Camera, dt);
 
 	UI_Begin(V2_From_V2i(GDI_Get_View_Dim()));
 
 	ui_font DefaultFont = { Engine->Font, 30 * UI_Scale() };
 	UI_Push_Font(DefaultFont);
 
-	UI_Text_Formatted("FPS: %d###Time", (int)(1.0 / dt));
+	UI_Set_Next_Fixed_Size(V2(500, 300));
+	UI_Set_Next_Layout_Axis(UI_AXIS_Y);
+	ui_box* Box = UI_Make_Box_From_String(0, String_Lit("Info Box"));
+	v2 P = V2(GDI_Get_View_Dim().x - Box->FixedDim.x, 0.0f);
+	UI_Set_Position(Box, P);
 
-	ui_box* TxtBox = UI_Get_Last_Box();
-	v2 P = V2(GDI_Get_View_Dim().x - TxtBox->FixedDim.x, 0.0f);
-	UI_Set_Position_X(TxtBox, P.x);
-	UI_Set_Position_Y(TxtBox, P.y);
+	UI_Push_Parent(Box);
+
+	UI_Text_Formatted("FPS: %d", (int)(1.0 / dt));
+	UI_Text_Formatted("Is Simulating: %s", Is_Simulating() ? "true" : "false");
+
+	UI_Pop_Parent();
 
 	UI_Pop_Font();
 
 	UI_End();
+
+	world* World = World_Get();
+	for (pool_iter Iter = Pool_Begin_Iter(&World->Entities); Iter.IsValid; Pool_Iter_Next(&Iter)) {
+		entity* Entity = (entity*)Iter.Data;
+		gfx_component* Component = Get_GFX_Component(Entity->GfxComponent);
+		Component->Transform = M4_Affine_Transform_Quat(Entity->Position, Entity->Orientation, Entity->Scale);
+	}
 
 	Render_Frame(&Engine->Renderer, Camera);
 	return true;
@@ -132,8 +266,26 @@ export_function ENGINE_FUNCTION_DEFINE(Engine_Initialize) {
 	Renderer_Init(&Engine->Renderer);
 	Audio_Init(&Engine->Audio);
 
-	Create_GFX_Component(M4_Affine_Transform_Quat_No_Scale(V3(0.5f, -0.5f, 0.0f), Quat_Identity()), V4(0.0f, 1.0f, 0.0f, 1.0f), String_Lit("Box"));
-	Create_GFX_Component(M4_Affine_Transform_Quat_No_Scale(V3(0.0f, 0.0f, -2.5f), Quat_Identity()), V4(0.0f, 0.0f, 1.0f, 1.0f), String_Lit("Monkey"));
+	Engine->SimArena = Arena_Create();
+	Engine->SimWaitEvent = OS_Event_Create();
+	Engine->SimFrameLock = OS_Mutex_Create();
+
+	Engine->World = World_Create(String_Lit("Default World"));
+
+	Create_Entity({
+		.Name = String_Lit("Entity A"),
+		.Type = ENTITY_TYPE_PLAYER,
+		.Position = V3(0.5f, -0.5f, 0.0f),
+		.Color = V4(0.0f, 1.0f, 0.0f, 1.0f),
+		.MeshName = String_Lit("Box")
+	});
+
+	Create_Entity({
+		.Name = String_Lit("Entity B"),
+		.Position = V3(0.0f, 0.0f, -2.5f),
+		.Color = V4(0.0f, 0.0f, 1.0f, 1.0f),
+		.MeshName = String_Lit("Box")
+	});
 
 	Camera_Init(&Engine->Camera, V3_Zero());
 

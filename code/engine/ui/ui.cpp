@@ -43,6 +43,16 @@ function void UI_Set_Position_Y(ui_box* Box, f32 Value) {
 	Box->FixedP.y = Value;
 }
 
+function void UI_Set_Position(ui_box* Box, v2 P) {
+	Box->Flags |= (UI_BOX_FLAG_FLOATING_X|UI_BOX_FLAG_FLOATING_Y);
+	Box->FixedP = P;
+}
+
+function void UI_Set_Next_Fixed_Size(v2 Size) {
+	UI_Set_Next_Fixed_Width(Size.x);
+	UI_Set_Next_Fixed_Height(Size.y);
+}
+
 function ui_box* UI_Make_Box(ui_box_flags Flags, ui_box_id ID) {
 	ui* UI = UI_Has_Begun();
 	ui_box* Box = NULL;
@@ -234,7 +244,14 @@ function void UI_Layout_Position(ui_box* Box) {
 	}
 
 	v2 P = Box->Rect.p0;
-	ui_axis LayoutAxis = Box->LayoutAxis;
+	int LayoutAxis = (int)Box->LayoutAxis;
+	int OppositeAxis = LayoutAxis ^ 1;
+
+	for (ui_box* Child = Box->FirstChild; Child; Child = Child->NextSibling) {
+		if (!(Child->Flags & (UI_BOX_FLAG_FLOATING_X << OppositeAxis))) {
+			Child->FixedP.Data[OppositeAxis] = P.Data[OppositeAxis];
+		}
+	}
 
 	for (ui_box* Child = Box->FirstChild; Child; Child = Child->NextSibling) {
 		if (!(Child->Flags & (UI_BOX_FLAG_FLOATING_X << LayoutAxis))) {

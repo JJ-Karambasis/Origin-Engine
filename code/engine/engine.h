@@ -7,6 +7,7 @@
 #include "mesh.h"
 #include "audio/audio.h"
 #include "renderer/renderer.h"
+#include "world/world.h"
 
 #include "accumulator_loop.h"
 #include "camera.h"
@@ -22,6 +23,28 @@ struct state {
 	b16 WasOn;
 	b16 IsOn;
 };
+
+#define DT_PER_INTERVAL 20.0
+struct high_res_time {
+	f64 dt;
+	u64 Interval;
+};
+
+function inline b32 Time_Is_Newer(high_res_time A, high_res_time B) {
+	if (A.Interval == B.Interval) {
+		return A.dt >= B.dt;
+	}
+
+	return A.Interval > B.Interval;
+}
+
+function inline void Time_Increment(high_res_time* Time, f64 dt) {
+	Time->dt += dt;
+	while (Time->dt >= DT_PER_INTERVAL) {
+		Time->dt -= DT_PER_INTERVAL;
+		Time->Interval++;
+	}
+}
 
 inline b32 State_Turned_On(state* State) { return State->IsOn && !State->WasOn; }
 inline b32 State_Turned_Off(state* State) { return !State->IsOn && State->WasOn; }
@@ -50,6 +73,21 @@ struct engine_thread_context {
 	input_manager* InputManager;
 };
 
+struct push_cmd {
+	entity_id ID;
+	v3 		  Position;
+	quat 	  Orientation;
+};
+
+#define MAX_PUSH_CMD_COUNT 1024
+struct push_frame {
+	push_cmd 	  Cmds[MAX_PUSH_CMD_COUNT];
+	u32 	 	  CmdCount;
+	high_res_time Time;
+
+	push_frame* Next;
+};
+
 struct engine {
 	engine_vtable* VTable;
 	base* 		   Base;
@@ -63,9 +101,21 @@ struct engine {
 	font* 		   Font;
 	f64 		   dt;
 	os_tls* 	   ThreadLocalStorage;
+	world* 		   World;
 
 	os_event_queue UpdateOSEvents;
 	os_event_queue SimOSEvents;
+
+	arena* 	   SimArena;
+	atomic_b32 IsSimulating;
+	os_event*  SimWaitEvent;
+	os_mutex*  SimFrameLock;
+	push_frame* FirstFrame;
+	push_frame* CurrentFrame;
+	push_frame* LastFrame;
+	push_frame* FreeFrames;
+	high_res_time SimTime;
+	high_res_time UpdateSimTime;
 
 	camera Camera;
 
@@ -122,6 +172,6 @@ function inline b32 Engine_Is_Running() {
 
 #define UI_Scale() Get_Engine()->UIScale
 #define Is_Focused() Atomic_Load_B32(&Get_Engine()->IsFocused)
-
+#define Is_Simulating() Atomic_Load_B32(&Get_Engine()->IsSimulating)
 
 #endif

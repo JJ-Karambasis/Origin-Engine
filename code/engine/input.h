@@ -9,4 +9,12 @@ struct input_manager {
 	v2    MouseP;
 };
 
+function input_manager* Input_Manager_Get();
+function b32 Keyboard_Is_Pressed(u32 Key);
+function b32 Keyboard_Is_Released(u32 Key);
+function b32 Keyboard_Is_Down(u32 Key);
+function b32 Mouse_Is_Pressed(u32 Key);
+function b32 Mouse_Is_Released(u32 Key);
+function b32 Mouse_Is_Down(u32 Key);
+
 #endif

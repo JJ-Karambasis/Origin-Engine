@@ -11,8 +11,13 @@ struct gfx_component {
 	v4 		  Color;
 	gfx_mesh* Mesh;
 };
-
 typedef pool_id gfx_component_id;
+
+struct gfx_component_create_info {
+	m4_affine Transform;
+	v4 Color;
+	string MeshName;
+};
 
 struct gfx_texture {
 	gdi_handle Texture;
@@ -75,6 +80,7 @@ struct renderer {
 	v2 LastDim;
 };
 
+function gfx_component_id Create_GFX_Component(const gfx_component_create_info& CreateInfo);
 function gfx_texture_id Create_GFX_Texture(const gfx_texture_create_info* CreateInfo);
 
 #endif
