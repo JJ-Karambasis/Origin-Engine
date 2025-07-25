@@ -208,7 +208,6 @@ function ENGINE_FUNCTION_DEFINE(Engine_Update_Impl) {
 	Input_Update();
 	Process_OS_Events(&Engine->UpdateOSEvents);
 
-
 	Sync_Simulation();
 
 	f32 dt = (f32)Engine->dt;
@@ -318,6 +317,7 @@ export_function ENGINE_FUNCTION_DEFINE(Engine_Initialize) {
 	Play_Sound(String_Lit("TestMusic"), SOUND_FLAG_LOOPING, 0.2f);
 
 	Engine_Start_Running();
+	Resume_Simulation();
 	Scratch_Release();
 
 	return true;
