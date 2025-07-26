@@ -424,7 +424,9 @@ function JOB_CALLBACK_DEFINE(Win32_Audio_Job) {
 
 function JOB_CALLBACK_DEFINE(Win32_Engine_Sim_Job) {
 	win32_engine* Engine = Win32_Get();
+	Win32_DLL_Wait_For_Reload(&Engine->EngineDLL);
 	Engine_Simulate(Engine);
+	Win32_DLL_Finish_Waiting(&Engine->EngineDLL);
 }
 
 function JOB_CALLBACK_DEFINE(Win32_Sim_Job) {
@@ -477,7 +479,10 @@ function JOB_CALLBACK_DEFINE(Win32_Sim_Job) {
 
 function JOB_CALLBACK_DEFINE(Win32_Engine_Update_Job) {
 	win32_engine* Engine = Win32_Get();
+
+	Win32_DLL_Wait_For_Reload(&Engine->EngineDLL);
 	Engine_Update(Engine);
+	Win32_DLL_Finish_Waiting(&Engine->EngineDLL);
 }
 
 function JOB_CALLBACK_DEFINE(Win32_Update_Job) {

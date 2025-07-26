@@ -1,5 +1,4 @@
 function ui* UI_Get() {
-	engine* Engine = Get_Engine();
 	engine_thread_context* ThreadContext = Get_Engine_Thread_Context();
 	if (!ThreadContext->UI) {
 		arena* Arena = Arena_Create();
@@ -237,6 +236,10 @@ function void UI_Layout_Fixed_Size(ui_box* Box) {
 	}
 }
 
+function b32 UI_Box_Is_Floating(ui_box* Box, s32 Axis) {
+	return (Box->Flags & (UI_BOX_FLAG_FLOATING_X << Axis)) || (Box->Flags & (UI_BOX_FLAG_RIGHT_ALIGN << Axis));
+}
+
 function void UI_Layout_Position(ui_box* Box) {
 	if (!Box->Parent) {
 		Box->Rect.p0 = Box->FixedP;
@@ -244,24 +247,32 @@ function void UI_Layout_Position(ui_box* Box) {
 	}
 
 	v2 P = Box->Rect.p0;
-	int LayoutAxis = (int)Box->LayoutAxis;
-	int OppositeAxis = LayoutAxis ^ 1;
+	s32 LayoutAxis = (s32)Box->LayoutAxis;
+	s32 OppositeAxis = LayoutAxis ^ 1;
 
 	for (ui_box* Child = Box->FirstChild; Child; Child = Child->NextSibling) {
-		if (!(Child->Flags & (UI_BOX_FLAG_FLOATING_X << OppositeAxis))) {
+		if (!UI_Box_Is_Floating(Child, OppositeAxis)) {
 			Child->FixedP.Data[OppositeAxis] = P.Data[OppositeAxis];
+		}
+
+		if ((Child->Flags & (UI_BOX_FLAG_RIGHT_ALIGN << OppositeAxis))) {
+			Child->FixedP.Data[OppositeAxis] = Box->Rect.p1.Data[OppositeAxis]-Child->FixedDim.Data[OppositeAxis];
 		}
 	}
 
 	for (ui_box* Child = Box->FirstChild; Child; Child = Child->NextSibling) {
-		if (!(Child->Flags & (UI_BOX_FLAG_FLOATING_X << LayoutAxis))) {
+		if (!UI_Box_Is_Floating(Child, LayoutAxis)) {
 			Child->FixedP.Data[LayoutAxis] = P.Data[LayoutAxis];
+		}
+
+		if ((Child->Flags & (UI_BOX_FLAG_RIGHT_ALIGN << LayoutAxis))) {
+			Child->FixedP.Data[LayoutAxis] = Box->Rect.p1.Data[LayoutAxis]-Child->FixedDim.Data[LayoutAxis];
 		}
 
 		Child->Rect.p0 = Child->FixedP;
 		Child->Rect.p1 = V2_Add_V2(Child->FixedP, Child->FixedDim);
 
-		if (!(Child->Flags & (UI_BOX_FLAG_FLOATING_X << LayoutAxis))) {
+		if (!UI_Box_Is_Floating(Child, LayoutAxis)) {
 			P.Data[LayoutAxis] += Child->FixedDim.Data[LayoutAxis];
 		}
 	}

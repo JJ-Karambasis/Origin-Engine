@@ -19,20 +19,24 @@ struct gfx_component_create_info {
 	string MeshName;
 };
 
+typedef slot_id gfx_texture_id;
 struct gfx_texture {
-	gdi_handle Texture;
-	gdi_handle View;
-	gdi_handle BindGroup;
+	gfx_texture_id ID;
+	gdi_handle     Texture;
+	gdi_handle     View;
 };
-typedef pool_id gfx_texture_id;
 
 struct gfx_texture_create_info {
 	v2i        Dim;
 	gdi_format Format;
 	buffer*    Texels;
-	gdi_handle Sampler;
-	b32 	   IsSRGB;
 	string     DebugName;
+};
+
+typedef slot_id gfx_sampler_id;
+struct gfx_sampler {
+	gfx_sampler_id ID;
+	gdi_handle 	   Sampler;
 };
 
 struct gfx_mesh {
@@ -58,29 +62,72 @@ struct shader_ui_box {
 	v4 C;
 };
 
+struct shader_data {
+	gdi_handle Buffer;
+	gdi_handle BindGroup;
+};
+
+struct texture_manager {
+	slot_map SamplerSlotMap;
+	gfx_sampler Samplers[MAX_BINDLESS_SAMPLERS];
+
+	slot_map 	   TextureSlotMap;
+	gfx_texture    Textures[MAX_BINDLESS_TEXTURES];
+	gdi_handle     BindlessTextureBindGroupLayout;
+	gdi_handle     BindlessTextureBindGroup;
+};
+
+struct shader {
+	u64 		   Hash;
+	os_hot_reload* HotReload;
+	buffer  	   Code;
+	b32 		   Reload;
+	shader* 	   Prev;
+	shader* 	   Next;
+};
+
+struct shader_slot {
+	shader* First;
+	shader* Last;
+};
+
+#define MAX_SHADER_SLOT_COUNT 4096
+#define SHADER_SLOT_MASK (MAX_SHADER_SLOT_COUNT-1)
+struct shader_manager {
+	shader_slot ShaderSlots[MAX_SHADER_SLOT_COUNT];
+
+	//Basic
+	gdi_handle BasicShader;
+	gdi_handle BasicLineShader;
+
+	//UI
+	gdi_handle UIShader;
+};
+
 #define MAX_MESH_SLOT_COUNT (4096)
-#define MESH_SLOT_MASK (MAX_MESH_SLOT_COUNT-1)
+#define MESH_SLOT_MASK (MAX_MESH_SLOT_COUNT - 1)
 struct renderer {
 	arena* Arena;
 	gdi* GDI;
 	pool GfxComponents;
-	pool GfxTextures;
 	gfx_mesh_slot MeshSlots[MAX_MESH_SLOT_COUNT];
-	gdi_handle DefaultSampler;
-	gdi_handle BasicShader;
-	gdi_handle BasicLineShader;
-	gdi_handle UIShader;
+	texture_manager TextureManager;
+	shader_manager ShaderManager;
+	
+	gdi_handle ShaderDataBindGroupLayout;
+
+	shader_data UIShaderData;
 
 	gdi_handle DepthBuffer;
 	gdi_handle DepthView;
 
-	gdi_handle TextureBindGroupLayout;
-	gfx_texture* WhiteTexture;
+	gfx_sampler_id DefaultSampler;
+	gfx_texture_id WhiteTexture;
 
 	v2 LastDim;
 };
 
 function gfx_component_id Create_GFX_Component(const gfx_component_create_info& CreateInfo);
-function gfx_texture_id Create_GFX_Texture(const gfx_texture_create_info* CreateInfo);
+function gfx_texture_id Create_GFX_Texture(const gfx_texture_create_info& CreateInfo);
 
 #endif

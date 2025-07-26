@@ -227,8 +227,8 @@ function ENGINE_FUNCTION_DEFINE(Engine_Update_Impl) {
 
 	UI_Push_Parent(Box);
 
-	UI_Text_Formatted("FPS: %d", (int)(1.0 / dt));
-	UI_Text_Formatted("Is Simulating: %s", Is_Simulating() ? "true" : "false");
+	UI_Text_Formatted(UI_BOX_FLAG_RIGHT_ALIGN, "FPS: %d", (int)(1.0 / dt));
+	UI_Text_Formatted(UI_BOX_FLAG_RIGHT_ALIGN, "Is Simulating: %s", Is_Simulating() ? "true" : "false");
 
 	UI_Pop_Parent();
 

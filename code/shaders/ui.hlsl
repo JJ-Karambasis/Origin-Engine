@@ -12,11 +12,13 @@ struct vs_output {
 	v4 C  : COLOR0;
 };
 
-[[vk::push_constant]]
 ConstantBuffer<ui_shader_data> ShaderData : register(b0, space0);
 
-Texture2D Texture : register(t0, space0);
-SamplerState Sampler : register(s1, space0);
+Texture2D Textures[MAX_BINDLESS_TEXTURES] : register(t0, space1);
+SamplerState Samplers[MAX_BINDLESS_SAMPLERS] : register(s1, space1);
+
+[[vk::push_constant]]
+ConstantBuffer<ui_draw_data> DrawData;
 
 vs_output VS_Main(vs_input Input) {
 	vs_output Result = (vs_output)0;
@@ -29,6 +31,6 @@ vs_output VS_Main(vs_input Input) {
 }
 
 v4 PS_Main(vs_output Pxl) : SV_TARGET0 {
-	v4 Color = Texture.Sample(Sampler, Pxl.UV)*Pxl.C;
+	v4 Color = Textures[DrawData.TextureIndex].Sample(Samplers[DrawData.SamplerIndex], Pxl.UV)*Pxl.C;
 	return Color;
 }

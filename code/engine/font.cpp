@@ -71,14 +71,11 @@ function glyph* Font_Get_Glyph_From_Index(font* Font, u32 GlyphIndex, f32 Size) 
 			}
 
 			buffer Texels = Make_Buffer(DstBitmap, Width * Height * sizeof(u32));
-			gfx_texture_create_info CreateInfo = {
+			Texture = Create_GFX_Texture( {
 				.Dim = V2i(Width, Height),
 				.Format = GDI_FORMAT_R8G8B8A8_SRGB,
-				.Texels = &Texels,
-				.IsSRGB = true
-			};
-
-			Texture = Create_GFX_Texture(&CreateInfo);
+				.Texels = &Texels
+			});
 
 			stbtt_FreeBitmap(Bitmap, NULL);
 			Scratch_Release();

@@ -84,61 +84,165 @@ function inline gfx_component* Get_GFX_Component(gfx_component_id ID) {
 	return Result;
 }
 
-function gfx_texture_id Create_GFX_Texture(const gfx_texture_create_info* CreateInfo) {
+function void Delete_GFX_Texture(gfx_texture_id ID) {
+	if (!ID.ID) return;
+	
+	renderer* Renderer = Renderer_Get();
+	texture_manager* TextureManager = &Renderer->TextureManager;
+
+	if (Slot_Map_Is_Allocated(&TextureManager->TextureSlotMap, ID)) {
+		gfx_texture* Texture = TextureManager->Textures + ID.Index;
+		GDI_Delete_Texture_View(Texture->View);
+		GDI_Delete_Texture(Texture->Texture);
+		Slot_Map_Free(&TextureManager->TextureSlotMap, ID);
+	}
+}
+
+function gfx_texture_id Create_GFX_Texture(const gfx_texture_create_info& CreateInfo) {	
 	arena* Scratch = Scratch_Get();
 	
 	renderer* Renderer = Renderer_Get();
+	texture_manager* TextureManager = &Renderer->TextureManager;
 
-	gfx_texture_id ID = Pool_Allocate(&Renderer->GfxTextures);
-	gfx_texture* Texture = (gfx_texture*)Pool_Get(&Renderer->GfxTextures, ID);
-	gdi_handle Sampler = GDI_Is_Null(CreateInfo->Sampler) ? Renderer->DefaultSampler : CreateInfo->Sampler;
+	gfx_texture_id ID = Slot_Map_Allocate(&TextureManager->TextureSlotMap);
+	gfx_texture* Texture = TextureManager->Textures + ID.Index;
+	Memory_Clear(Texture, sizeof(gfx_texture));
 
 	gdi_texture_create_info TextureInfo = {
-		.Format = CreateInfo->Format,
-		.Dim = CreateInfo->Dim,
+		.Format = CreateInfo.Format,
+		.Dim = CreateInfo.Dim,
 		.Usage = GDI_TEXTURE_USAGE_SAMPLED,
 		.MipCount = 1,
-		.InitialData = CreateInfo->Texels,
-		.DebugName = CreateInfo->DebugName
+		.InitialData = CreateInfo.Texels,
+		.DebugName = CreateInfo.DebugName
 	};
 
+	Texture->ID = ID;
 	Texture->Texture = GDI_Create_Texture(&TextureInfo);
 	if (!GDI_Is_Null(Texture->Texture)) {
 		gdi_texture_view_create_info TextureViewInfo = {
 			.Texture = Texture->Texture,
-			.Format = CreateInfo->IsSRGB ? GDI_Get_SRGB_Format(CreateInfo->Format) : CreateInfo->Format,
-			.DebugName = String_Is_Empty(CreateInfo->DebugName) ? String_Empty() : String_Concat((allocator*)Scratch, CreateInfo->DebugName, String_Lit(" View"))
+			.Format = CreateInfo.Format,
+			.DebugName = String_Is_Empty(CreateInfo.DebugName) ? String_Empty() : String_Concat((allocator*)Scratch, CreateInfo.DebugName, String_Lit(" View"))
 		};
 		Texture->View = GDI_Create_Texture_View(&TextureViewInfo);
 		if (!GDI_Is_Null(Texture->View)) {
-			gdi_bind_group_create_info BindGroupInfo = {
-				.Layout = Renderer->TextureBindGroupLayout,
-				.TextureViews = { .Ptr = &Texture->View, .Count = 1 },
-				.Samplers = { .Ptr = &Sampler, .Count = 1 },
-				.DebugName = String_Is_Empty(CreateInfo->DebugName) ? String_Empty() : String_Concat((allocator*)Scratch, CreateInfo->DebugName, String_Lit(" Bind Group"))
+			gdi_bind_group_write Write = {
+				.Binding = 0,
+				.Index = ID.Index,
+				.TextureViews = { .Ptr = &Texture->View, .Count = 1 }
 			};
 
-			Texture->BindGroup = GDI_Create_Bind_Group(&BindGroupInfo);
-			if (!GDI_Is_Null(Texture->BindGroup)) {
-				Scratch_Release();
-				return ID;
-			}
+			gdi_bind_group_write_info WriteInfo = {
+				.Writes = { .Ptr = &Write, .Count = 1 }
+			};
 
-			GDI_Delete_Texture_View(Texture->View);
+			GDI_Write_Bind_Group(TextureManager->BindlessTextureBindGroup, &WriteInfo);
+
+			Scratch_Release();
+			return ID;
 		}
-
-		GDI_Delete_Texture(Texture->Texture);
 	}
 
-	Pool_Free(&Renderer->GfxTextures, ID);
+	Delete_GFX_Texture(ID);
 	Scratch_Release();
 
-	return Empty_Pool_ID();
+	return Slot_Null();
 }
 
 function inline gfx_texture* Get_GFX_Texture(gfx_texture_id ID) {
 	renderer* Renderer = Renderer_Get();
-	gfx_texture* Result = (gfx_texture*)Pool_Get(&Renderer->GfxTextures, ID);
+	texture_manager* TextureManager = &Renderer->TextureManager;
+	if (!Slot_Map_Is_Allocated(&TextureManager->TextureSlotMap, ID)) return NULL;
+
+	gfx_texture* Result = TextureManager->Textures + ID.Index;
+	return Result;
+}
+
+function void Delete_GFX_Sampler(gfx_sampler_id ID) {
+	if (!ID.ID) return;
+	
+	renderer* Renderer = Renderer_Get();
+	texture_manager* TextureManager = &Renderer->TextureManager;
+
+	if (Slot_Map_Is_Allocated(&TextureManager->SamplerSlotMap, ID)) {
+		gfx_sampler* Sampler = TextureManager->Samplers + ID.Index;
+		GDI_Delete_Sampler(Sampler->Sampler);
+		Slot_Map_Free(&TextureManager->SamplerSlotMap, ID);
+	}
+}
+
+function gfx_sampler_id Create_GFX_Sampler(const gdi_sampler_create_info& CreateInfo) {	
+	arena* Scratch = Scratch_Get();
+	
+	renderer* Renderer = Renderer_Get();
+	texture_manager* TextureManager = &Renderer->TextureManager;
+
+	gfx_sampler_id ID = Slot_Map_Allocate(&TextureManager->SamplerSlotMap);
+	gfx_sampler* Sampler = TextureManager->Samplers + ID.Index;
+	Memory_Clear(Sampler, sizeof(gfx_sampler));
+
+	Sampler->Sampler = GDI_Create_Sampler(&CreateInfo);
+	if (!GDI_Is_Null(Sampler->Sampler)) {
+		Sampler->ID = ID;
+
+		gdi_bind_group_write Write = {
+			.Binding = 1,
+			.Index = ID.Index,
+			.Samplers = { .Ptr = &Sampler->Sampler, .Count = 1 }
+		};
+
+		gdi_bind_group_write_info WriteInfo = {
+			.Writes = { .Ptr = &Write, .Count = 1 }
+		};
+
+		GDI_Write_Bind_Group(TextureManager->BindlessTextureBindGroup, &WriteInfo);
+
+		Scratch_Release();
+
+		return ID;
+	}
+
+	Scratch_Release();
+
+	Delete_GFX_Sampler(ID);
+	return Slot_Null();
+}
+
+function inline gfx_sampler* Get_GFX_Sampler(gfx_sampler_id ID) {
+	renderer* Renderer = Renderer_Get();
+	texture_manager* TextureManager = &Renderer->TextureManager;
+	if (!Slot_Map_Is_Allocated(&TextureManager->SamplerSlotMap, ID)) return NULL;
+
+	gfx_sampler* Result = TextureManager->Samplers + ID.Index;
+	return Result;
+}
+
+function shader_data Create_Shader_Data(size_t Size, string DebugName) {
+	shader_data Result = {};
+
+	arena* Scratch = Scratch_Get();
+
+	gdi_buffer_create_info BufferInfo = {
+		.Size = Size,
+		.Usage = GDI_BUFFER_USAGE_CONSTANT_BUFFER,
+		.DebugName = String_Is_Empty(DebugName) ? String_Empty() : String_Concat((allocator *)Scratch, DebugName, String_Lit("_Buffer"))
+	};
+
+	Result.Buffer = GDI_Create_Buffer(&BufferInfo);
+
+	gdi_bind_group_buffer BindGroupBuffer = { .Buffer = Result.Buffer };
+
+	gdi_bind_group_create_info BindGroupInfo = {
+		.Layout = Renderer_Get()->ShaderDataBindGroupLayout,
+		.Buffers = { .Ptr = &BindGroupBuffer, .Count = 1 },
+		.DebugName = String_Is_Empty(DebugName) ? String_Empty() : String_Concat((allocator *)Scratch, DebugName, String_Lit("_BindGroup"))
+	};
+
+	Result.BindGroup = GDI_Create_Bind_Group(&BindGroupInfo);
+
+	Scratch_Release();
+
 	return Result;
 }
 
@@ -171,7 +275,13 @@ function void Draw_Text(gdi_render_pass* RenderPass, font* Font, v2 PixelP, f32 
 		gfx_texture* Texture = Get_GFX_Texture(Glyph->Texture);
 		if (Texture) {
 			v2 P = V2(PixelP.x+Glyph->Offset.x, PixelP.y+Ascent+Glyph->Offset.y);
-			Render_Set_Bind_Group(RenderPass, 0, Texture->BindGroup);
+			
+			ui_draw_data DrawData = {
+				.TextureIndex = (s32)Texture->ID.Index,
+				.SamplerIndex = (s32)Renderer_Get()->DefaultSampler.Index
+			};
+			
+			Render_Set_Push_Constants(RenderPass, &DrawData, sizeof(ui_draw_data));
 			IM_Push_Rect2D_Color_UV_Norm(P, V2_Add_V2(P, Glyph->Dim), Color);
 			IM_Flush(RenderPass);
 		}
@@ -194,7 +304,13 @@ function void Draw_Text_Formatted(gdi_render_pass* RenderPass, font* Font, v2 P,
 }
 
 function void Draw_UI_Box(gdi_render_pass* RenderPass, ui* UI, ui_box* Box) {
-	Render_Set_Bind_Group(RenderPass, 0, Renderer_Get()->WhiteTexture->BindGroup);
+	renderer* Renderer = Renderer_Get();
+	ui_draw_data DrawData = {
+		.TextureIndex = (s32)Renderer->WhiteTexture.Index,
+		.SamplerIndex = (s32)Renderer->DefaultSampler.Index
+	};
+
+	Render_Set_Push_Constants(RenderPass, &DrawData, sizeof(ui_draw_data));
 
 	v4 BackgroundColor = Box->BackgroundColor;
 	if (Box->CurrentState & UI_BOX_STATE_HOVERING) {
@@ -229,130 +345,251 @@ function void Draw_Mesh(gdi_render_pass* RenderPass, gfx_mesh* Mesh) {
 	Render_Draw_Idx(RenderPass, Mesh->IdxCount, 0, 0);
 }
 
+
+function shader* Get_Shader(string ShaderName) {
+	renderer* Renderer = Renderer_Get();
+
+	u64 Hash = U64_Hash_String(ShaderName);
+	u64 SlotIndex = Hash & SHADER_SLOT_MASK;
+	shader_slot* ShaderSlot = Renderer->ShaderManager.ShaderSlots + SlotIndex;
+
+	shader* Shader = NULL;
+	for (shader* HashShader = ShaderSlot->First; HashShader; HashShader = HashShader->Next) {
+		if (HashShader->Hash == Hash) {
+			Shader = HashShader;
+			break;
+		}
+	}
+	
+	if (!Shader) {
+		Shader = Arena_Push_Struct(Renderer->Arena, shader);
+		Shader->Hash = Hash;
+		Shader->Reload = true;
+
+		SLL_Push_Back(ShaderSlot->First, ShaderSlot->Last, Shader);
+	}
+
+	if (Shader->Reload) {
+		arena* Scratch = Scratch_Get();
+		string FilePath = String_Format((allocator*)Scratch, "shaders/%.*s.shader", ShaderName.Size, ShaderName.Ptr);
+
+		if (!Shader->HotReload) {
+			Shader->HotReload = OS_Hot_Reload_Create(FilePath);
+		}
+
+		if (!Buffer_Is_Empty(Shader->Code)) {
+			Allocator_Free_Memory(Default_Allocator_Get(), Shader->Code.Ptr);
+		}
+
+		Shader->Code = Read_Entire_File(Default_Allocator_Get(), FilePath);
+
+		Scratch_Release();
+	}
+
+	return Shader;
+}
+
+function b32 Hot_Reload_Shaders() {
+	renderer* Renderer = Renderer_Get();
+	shader_manager* ShaderManager = &Renderer->ShaderManager;
+
+	//First check every shader and set their reload flags if the hot reloader
+	//detects it. This way we can manually set the reload flag for whatever reason
+	//(like startup) and still have it reload the shaders
+	for (u32 i = 0; i < MAX_SHADER_SLOT_COUNT; i++) {
+		shader_slot* Slot = ShaderManager->ShaderSlots + i;
+		for (shader* Shader = Slot->First; Shader; Shader = Shader->Next) {
+			if (OS_Hot_Reload_Has_Reloaded(Shader->HotReload)) {
+				Shader->Reload = true;
+			}
+		}
+	}
+
+	//Basic 
+	{
+		shader* VtxShader = Get_Shader(String_Lit("basic_shader_vtx"));
+		shader* PxlShader = Get_Shader(String_Lit("basic_shader_pxl"));
+
+		if (VtxShader->Reload || PxlShader->Reload) {
+			if (!GDI_Is_Null(ShaderManager->BasicShader)) {
+				GDI_Delete_Shader(ShaderManager->BasicShader);
+			}
+
+			if (!GDI_Is_Null(ShaderManager->BasicLineShader)) {
+				GDI_Delete_Shader(ShaderManager->BasicLineShader);
+			}
+
+			gdi_vtx_attribute Attributes[] = {
+				{ .Semantic = String_Lit("POSITION"), .Format = GDI_FORMAT_R32G32B32_FLOAT }
+			};
+
+			gdi_vtx_binding VtxBindings[] = {
+				{ .Stride = sizeof(v3), .Attributes = { .Ptr = Attributes, .Count = Array_Count(Attributes) } }
+			};
+
+			gdi_shader_create_info ShaderCreateInfo = {
+				.VS = VtxShader->Code,
+				.PS = PxlShader->Code,
+				.PushConstantCount = sizeof(basic_shader_data)/sizeof(u32),
+				.VtxBindings = { .Ptr = VtxBindings, .Count = Array_Count(VtxBindings) },
+				.RenderTargetFormats = { GDI_Get_View_Format() },
+				.DepthState = {
+					.TestEnabled = true,
+					.WriteEnabled = true,
+					.CompareFunc = GDI_COMPARE_FUNC_LEQUAL,
+					.DepthFormat = GDI_FORMAT_D32_FLOAT
+				},
+				.DebugName = String_Lit("Basic Shader")
+			};
+
+			ShaderManager->BasicShader = GDI_Create_Shader(&ShaderCreateInfo);
+			if (GDI_Is_Null(ShaderManager->BasicShader)) return false;
+
+			ShaderCreateInfo.Primitive = GDI_PRIMITIVE_LINE;
+			ShaderCreateInfo.DebugName = String_Lit("Basic Line Shader");
+			ShaderManager->BasicLineShader = GDI_Create_Shader(&ShaderCreateInfo);
+			if (GDI_Is_Null(ShaderManager->BasicLineShader)) return false;
+		}
+	}
+
+	//UI 
+	{
+		shader* VtxShader = Get_Shader(String_Lit("ui_vtx"));
+		shader* PxlShader = Get_Shader(String_Lit("ui_pxl"));
+
+		if (VtxShader->Reload || PxlShader->Reload) {
+			if (!GDI_Is_Null(ShaderManager->UIShader)) {
+				GDI_Delete_Shader(ShaderManager->UIShader);
+			}
+
+			gdi_vtx_attribute Attributes[] = {
+				{ .Semantic = String_Lit("POSITION"), .Format = GDI_FORMAT_R32G32_FLOAT },
+				{ .Semantic = String_Lit("TEXCOORD"), .Format = GDI_FORMAT_R32G32_FLOAT },
+				{ .Semantic = String_Lit("COLOR"), .Format = GDI_FORMAT_R32G32B32A32_FLOAT }
+			};
+
+			gdi_vtx_binding VtxBindings[] = {
+				{ .Stride = sizeof(im_vtx_v2_uv2_c), .Attributes = { .Ptr = Attributes, .Count = Array_Count(Attributes) } }
+			};
+
+			gdi_blend_state BlendStates[] = {
+				{ .SrcFactor = GDI_BLEND_ONE, .DstFactor = GDI_BLEND_INV_SRC_ALPHA }
+			};
+
+			gdi_handle BindGroupLayouts[] = {
+				Renderer->ShaderDataBindGroupLayout,
+				Renderer->TextureManager.BindlessTextureBindGroupLayout
+			};
+
+			gdi_shader_create_info ShaderCreateInfo = {
+				.VS = VtxShader->Code,
+				.PS = PxlShader->Code,
+				.BindGroupLayouts = { .Ptr = BindGroupLayouts, .Count = Array_Count(BindGroupLayouts) },
+				.PushConstantCount = sizeof(ui_draw_data) / sizeof(u32),
+				.VtxBindings = { .Ptr = VtxBindings, .Count = Array_Count(VtxBindings) },
+				.RenderTargetFormats = { GDI_Get_View_Format() },
+				.BlendStates = { .Ptr = BlendStates, .Count = Array_Count(BlendStates) },
+				.DebugName = String_Lit("UI Shader")
+			};
+
+			ShaderManager->UIShader = GDI_Create_Shader(&ShaderCreateInfo);
+			if (GDI_Is_Null(ShaderManager->UIShader)) return false;
+		}
+	}
+
+	//Reset all the reload flags for all shaders after we have reloaded them
+	for (u32 i = 0; i < MAX_SHADER_SLOT_COUNT; i++) {
+		shader_slot* Slot = ShaderManager->ShaderSlots + i;
+		for (shader* Shader = Slot->First; Shader; Shader = Shader->Next) {
+			Shader->Reload = false;
+		}
+	}
+
+	return true;
+}
+
 function b32 Renderer_Init(renderer* Renderer) {
 	Renderer->Arena = Arena_Create();
 	Renderer->GfxComponents = Pool_Init(sizeof(gfx_component));
-	Renderer->GfxTextures = Pool_Init(sizeof(gfx_texture));
 
 	{
-		gdi_sampler_create_info SamplerInfo = {
-			.Filter = GDI_FILTER_LINEAR,
-			.AddressModeU = GDI_ADDRESS_MODE_CLAMP,
-			.AddressModeV = GDI_ADDRESS_MODE_CLAMP,
-			.DebugName = String_Lit("Default Sampler")
-		};
-		Renderer->DefaultSampler = GDI_Create_Sampler(&SamplerInfo);
-		if (GDI_Is_Null(Renderer->DefaultSampler)) return false;
-	}
+		texture_manager* TextureManager = &Renderer->TextureManager;
+		TextureManager->SamplerSlotMap = Slot_Map_Init((allocator*)Renderer->Arena, MAX_BINDLESS_SAMPLERS);
+		TextureManager->TextureSlotMap = Slot_Map_Init((allocator*)Renderer->Arena, MAX_BINDLESS_TEXTURES);
 
-	{
 		gdi_bind_group_binding Bindings[] = {
-			{ .Type = GDI_BIND_GROUP_TYPE_TEXTURE, .Count = 1 },
-			{ .Type = GDI_BIND_GROUP_TYPE_SAMPLER, .Count = 1 }
+			{ .Type = GDI_BIND_GROUP_TYPE_TEXTURE, .Count = MAX_BINDLESS_TEXTURES },
+			{ .Type = GDI_BIND_GROUP_TYPE_SAMPLER, .Count = MAX_BINDLESS_SAMPLERS }
 		};
 
 		gdi_bind_group_layout_create_info BindGroupLayoutInfo = {
 			.Bindings = { .Ptr = Bindings, .Count = Array_Count(Bindings) },
-			.DebugName = String_Lit("Texture Bind Group Layout")
+			.DebugName = String_Lit("Bindless Texture Bind Group Layout")
 		};
 
-		Renderer->TextureBindGroupLayout = GDI_Create_Bind_Group_Layout(&BindGroupLayoutInfo);
-		if (GDI_Is_Null(Renderer->TextureBindGroupLayout)) return false;
+		TextureManager->BindlessTextureBindGroupLayout = GDI_Create_Bind_Group_Layout(&BindGroupLayoutInfo);
+		if (GDI_Is_Null(TextureManager->BindlessTextureBindGroupLayout)) return false;
+
+		gdi_bind_group_create_info BindGroupInfo = {
+			.Layout = TextureManager->BindlessTextureBindGroupLayout,
+			.DebugName = String_Lit("Bindless Texture Bind Group")
+		};
+
+		TextureManager->BindlessTextureBindGroup = GDI_Create_Bind_Group(&BindGroupInfo);
+		if (GDI_Is_Null(TextureManager->BindlessTextureBindGroup)) return false;
 	}
 
 	{
-		arena* Scratch = Scratch_Get();
-		buffer VSCode = Read_Entire_File((allocator*)Scratch, String_Lit("shaders/basic_shader_vtx.shader"));
-		buffer PSCode = Read_Entire_File((allocator*)Scratch, String_Lit("shaders/basic_shader_pxl.shader"));
-
-		gdi_vtx_attribute Attributes[] = {
-			{ .Semantic = String_Lit("POSITION"), .Format = GDI_FORMAT_R32G32B32_FLOAT }
-		};
-
-		gdi_vtx_binding VtxBindings[] = {
-			{ .Stride = sizeof(v3), .Attributes = { .Ptr = Attributes, .Count = Array_Count(Attributes) } }
-		};
-
-		gdi_shader_create_info ShaderCreateInfo = {
-			.VS = VSCode,
-			.PS = PSCode,
-			.PushConstantCount = sizeof(basic_shader_data)/sizeof(u32),
-			.VtxBindings = { .Ptr = VtxBindings, .Count = Array_Count(VtxBindings) },
-			.RenderTargetFormats = { GDI_Get_View_Format() },
-			.DepthState = {
-				.TestEnabled = true,
-				.WriteEnabled = true,
-				.CompareFunc = GDI_COMPARE_FUNC_LEQUAL,
-				.DepthFormat = GDI_FORMAT_D32_FLOAT
-			},
-			.DebugName = String_Lit("Basic Shader")
-		};
-
-		Renderer->BasicShader = GDI_Create_Shader(&ShaderCreateInfo);
-		if (GDI_Is_Null(Renderer->BasicShader)) return false;
-
-		ShaderCreateInfo.Primitive = GDI_PRIMITIVE_LINE;
-		ShaderCreateInfo.DebugName = String_Lit("Basic Line Shader");
-		Renderer->BasicLineShader = GDI_Create_Shader(&ShaderCreateInfo);
-
-		Scratch_Release();
+		Renderer->DefaultSampler = Create_GFX_Sampler({
+			.Filter = GDI_FILTER_LINEAR,
+			.AddressModeU = GDI_ADDRESS_MODE_CLAMP,
+			.AddressModeV = GDI_ADDRESS_MODE_CLAMP,
+			.DebugName = String_Lit("Default Sampler")
+		});
+		if (Slot_Is_Null(Renderer->DefaultSampler)) return false;
 	}
 
 	{
-		arena* Scratch = Scratch_Get();
-
-		buffer VSCode = Read_Entire_File((allocator*)Scratch, String_Lit("shaders/ui_vtx.shader"));
-		buffer PSCode = Read_Entire_File((allocator*)Scratch, String_Lit("shaders/ui_pxl.shader"));
-
-		gdi_vtx_attribute Attributes[] = {
-			{ .Semantic = String_Lit("POSITION"), .Format = GDI_FORMAT_R32G32_FLOAT },
-			{ .Semantic = String_Lit("TEXCOORD"), .Format = GDI_FORMAT_R32G32_FLOAT },
-			{ .Semantic = String_Lit("COLOR"), .Format = GDI_FORMAT_R32G32B32A32_FLOAT }
+		gdi_bind_group_binding Bindings[] = {
+			{ .Type = GDI_BIND_GROUP_TYPE_CONSTANT_BUFFER, .Count = 1 }
 		};
 
-		gdi_vtx_binding VtxBindings[] = {
-			{ .Stride = sizeof(im_vtx_v2_uv2_c), .Attributes = { .Ptr = Attributes, .Count = Array_Count(Attributes) } }
+		gdi_bind_group_layout_create_info BindGroupLayoutInfo = {
+			.Bindings = { .Ptr = Bindings, .Count = Array_Count(Bindings) },
+			.DebugName = String_Lit("Shader Data Bind Group Layout")
 		};
 
-		gdi_blend_state BlendStates[] = {
-			{ .SrcFactor = GDI_BLEND_ONE, .DstFactor = GDI_BLEND_INV_SRC_ALPHA }
-		};
-
-		gdi_shader_create_info ShaderCreateInfo = {
-			.VS = VSCode,
-			.PS = PSCode,
-			.BindGroupLayouts = { .Ptr = &Renderer->TextureBindGroupLayout, .Count = 1 },
-			.PushConstantCount = sizeof(ui_shader_data)/sizeof(u32),
-			.VtxBindings = { .Ptr = VtxBindings, .Count = Array_Count(VtxBindings) },
-			.RenderTargetFormats = { GDI_Get_View_Format() },
-			.BlendStates = { .Ptr = BlendStates, .Count = Array_Count(BlendStates) },
-			.DebugName = String_Lit("UI Shader")
-		};
-
-		Renderer->UIShader = GDI_Create_Shader(&ShaderCreateInfo);
-		if (GDI_Is_Null(Renderer->UIShader)) return false;
-
-		Scratch_Release();
+		Renderer->ShaderDataBindGroupLayout = GDI_Create_Bind_Group_Layout(&BindGroupLayoutInfo);
+		if (GDI_Is_Null(Renderer->ShaderDataBindGroupLayout)) return false;
 	}
 
 	{
 		u32 TexelData[] = { 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF };
 		buffer Texels = Make_Buffer(TexelData, sizeof(TexelData));
-		gfx_texture_create_info WhiteTextureInfo = {
+		Renderer->WhiteTexture = Create_GFX_Texture({
 			.Dim = V2i(2, 2),
 			.Format = GDI_FORMAT_R8G8B8A8_SRGB,
 			.Texels = &Texels,
-			.IsSRGB = true,
 			.DebugName = String_Lit("Default White Texture")
-		};
-		gfx_texture_id TextureID = Create_GFX_Texture(&WhiteTextureInfo);
-		Renderer->WhiteTexture = Get_GFX_Texture(TextureID);
+		});
+	}
+
+	{
+		Renderer->UIShaderData = Create_Shader_Data(sizeof(ui_shader_data), String_Lit("UI Shader Data"));
+	}
+
+	if (!Hot_Reload_Shaders()) {
+		return false;
 	}
 
 	return true;
 }
 
 function b32 Render_Frame(renderer* Renderer, camera* CameraView) {
+	if (!Hot_Reload_Shaders()) return false;
+
+	shader_manager* ShaderManager = &Renderer->ShaderManager;
+
 	v2 ViewDim = V2_From_V2i(GDI_Get_View_Dim());
 	if (ViewDim.x != Renderer->LastDim.x || ViewDim.y != Renderer->LastDim.y) {
 		if (!GDI_Is_Null(Renderer->DepthBuffer)) {
@@ -398,7 +635,7 @@ function b32 Render_Frame(renderer* Renderer, camera* CameraView) {
 		};
 		gdi_render_pass* RenderPass = GDI_Begin_Render_Pass(&RenderPassInfo);
 
-		Render_Set_Shader(RenderPass, Renderer->BasicShader);
+		Render_Set_Shader(RenderPass, ShaderManager->BasicShader);       
 
 		for (pool_iter Iter = Pool_Begin_Iter(&Renderer->GfxComponents); Iter.IsValid; Pool_Iter_Next(&Iter)) {
 			gfx_component* Component = (gfx_component*)Iter.Data;
@@ -422,12 +659,14 @@ function b32 Render_Frame(renderer* Renderer, camera* CameraView) {
 		gdi_render_pass_begin_info RenderPassInfo = { .RenderTargetViews = { GDI_Get_View() } };
 		gdi_render_pass* RenderPass = GDI_Begin_Render_Pass(&RenderPassInfo);
 
-		ui_shader_data ShaderData = {
-			.InvResolution = V2(1.0f / ViewDim.x, 1.0f / ViewDim.y)
-		};
+		ui_shader_data* ShaderData = (ui_shader_data*)GDI_Map_Buffer(Renderer->UIShaderData.Buffer);
+		ShaderData->InvResolution = V2(1.0f / ViewDim.x, 1.0f / ViewDim.y);
+		GDI_Unmap_Buffer(Renderer->UIShaderData.Buffer);
 
-		Render_Set_Shader(RenderPass, Renderer->UIShader);
-		Render_Set_Push_Constants(RenderPass, &ShaderData, sizeof(ui_shader_data));
+		gdi_handle BindGroups[] = { Renderer->UIShaderData.BindGroup, Renderer->TextureManager.BindlessTextureBindGroup };
+
+		Render_Set_Shader(RenderPass, ShaderManager->UIShader);
+		Render_Set_Bind_Groups(RenderPass, 0, BindGroups, Array_Count(BindGroups));
 
 		Draw_UI(RenderPass, UI_Get());
 

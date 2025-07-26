@@ -7,7 +7,9 @@ enum {
 	UI_BOX_FLAG_NONE = 0,
 	UI_BOX_FLAG_FLOATING_X = (1 << 0),
 	UI_BOX_FLAG_FLOATING_Y = (1 << 1),
-	UI_BOX_FLAG_DRAW_TEXT = (1 << 2)
+	UI_BOX_FLAG_DRAW_TEXT = (1 << 2),
+	UI_BOX_FLAG_RIGHT_ALIGN = (1 << 3),
+	UI_BOX_FLAG_BOTTOM_ALIGN = (1 << 4)
 };
 typedef u64 ui_box_flags;
 
