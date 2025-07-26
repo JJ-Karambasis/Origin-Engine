@@ -3,6 +3,7 @@
 
 #define MAX_BINDLESS_TEXTURES (4096)
 #define MAX_BINDLESS_SAMPLERS (16)
+#define MAX_ENTITY_DATA (4096)
 
 struct basic_shader_data {
 	m4 ModelToClip;
@@ -13,7 +14,10 @@ struct entity_shader_data {
 	m4 WorldToClip;
 };
 
-struct entity_material_data {
+struct entity_data {
+	m4_affine ModelToWorld;
+	m4_affine NormalModelToWorld;
+
 	//x determines whether this is a texture or not. If it is then y stores 
 	//the texture index, otherwise yzw stores the diffuse value
 	v4 DiffusePacking; 
@@ -23,9 +27,7 @@ struct entity_material_data {
 };
 
 struct entity_draw_data {
-	m4_affine ModelToWorld;
-	m4_affine NormalModelToWorld;
-	s32 	  MaterialIndex;
+	s32 EntityIndex;
 };
 
 struct ui_draw_data {

@@ -31,6 +31,7 @@ struct entity_create_info {
 	v3 Scale = V3_All(1.0f);
 	v4 Color;
 	string MeshName;
+	material_info Material;
 };
 
 struct sim_entity {

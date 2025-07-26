@@ -52,7 +52,8 @@ function entity_id Create_Entity(const entity_create_info& CreateInfo) {
 	Entity->GfxComponent = Create_GFX_Component( {
 		.Transform = M4_Affine_Transform_Quat(Entity->Position, Entity->Orientation, Entity->Scale),
 		.Color = CreateInfo.Color,
-		.MeshName = CreateInfo.MeshName
+		.MeshName = CreateInfo.MeshName,
+		.Material = CreateInfo.Material
 	});
 
 	DLL_Push_Back(Slot->First, Slot->Last, Entity);

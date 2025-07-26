@@ -274,16 +274,28 @@ export_function ENGINE_FUNCTION_DEFINE(Engine_Initialize) {
 	Create_Entity({
 		.Name = String_Lit("Entity A"),
 		.Type = ENTITY_TYPE_PLAYER,
-		.Position = V3(0.5f, -0.5f, 0.0f),
+		.Position = V3(0.5f, -0.5f, 5.0f),
 		.Color = V4(0.0f, 1.0f, 0.0f, 1.0f),
-		.MeshName = String_Lit("Box")
+		.MeshName = String_Lit("Box"),
+		.Material = {
+			.Diffuse = {
+				.IsTexture = true,
+				.TextureName = String_Lit("Brick_Color")
+			}
+		}
 	});
 
 	Create_Entity({
 		.Name = String_Lit("Entity B"),
 		.Position = V3(0.0f, 0.0f, -2.5f),
 		.Color = V4(0.0f, 0.0f, 1.0f, 1.0f),
-		.MeshName = String_Lit("Box")
+		.MeshName = String_Lit("Box"),
+		.Material = { 
+			.Diffuse = {
+				.IsTexture = true,
+				.TextureName = String_Lit("Smile")
+			}
+		}
 	});
 
 	Camera_Init(&Engine->Camera, V3_Zero());
