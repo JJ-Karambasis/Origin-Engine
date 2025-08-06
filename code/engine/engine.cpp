@@ -8,24 +8,13 @@ Array_Implement(u32, U32);
 #include "font.cpp"
 #include "mesh.cpp"
 #include "world/world.cpp"
+#include "simulation/simulation.cpp"
 #include "renderer/renderer.cpp"
 #include "audio/audio.cpp"
 
 #include "os/os_events.cpp"
 #include "input.cpp"
 #include "ui/ui.cpp"
-
-function void Pause_Simulation() {
-	engine* Engine = Get_Engine();
-	OS_Event_Reset(Engine->SimWaitEvent);
-	Atomic_Store_B32(&Engine->IsSimulating, false);
-	OS_Event_Wait(Engine->SimWaitEvent);
-}
-
-function void Resume_Simulation() {
-	engine* Engine = Get_Engine();
-	Atomic_Store_B32(&Engine->IsSimulating, true);
-}
 
 function void Process_OS_Events(os_event_queue* EventQueue) {
 	Input_Update();
@@ -72,14 +61,18 @@ function ENGINE_FUNCTION_DEFINE(Engine_Simulate_Impl) {
 
 	Sim_Process_Messages();
 
-	world* World = World_Get();
+	simulation* Simulation = Simulation_Get();
 
 	f32 dt = (f32)SIM_HZ;
 
-	sim_entity_storage* SimEntities = &World->SimEntities;
+	sim_entity_storage* SimEntities = &Simulation->Entities;
+
+	v3 PlayerP = V3_Zero();
 	for (u32 i = 0; i < SimEntities->Capacity; i++) {
 		sim_entity* Entity = SimEntities->Entities + i;
 		if (Entity->Type == ENTITY_TYPE_PLAYER) {
+			PlayerP = Entity->Position;
+
 			v2 InputDirection = V2_Zero();
 
 			if (Keyboard_Is_Down('A')) {
@@ -98,109 +91,31 @@ function ENGINE_FUNCTION_DEFINE(Engine_Simulate_Impl) {
 				InputDirection.y = -1.0f;
 			}
 
-			v2 Velocity = V2_Mul_S(V2_Norm(InputDirection), 1.5f * dt);
-			Entity->Position.xy = V2_Add_V2(Entity->Position.xy, Velocity);
+			Entity->Force = V3_Add_V3(Entity->Force, V3_From_V2(V2_Mul_S(V2_Norm(InputDirection), 600.0f)));
+		}
+	}
 
+	Simulation_Update(Simulation, SIM_HZ);
+
+	for (u32 i = 0; i < SimEntities->Capacity; i++) {
+		sim_entity* Entity = SimEntities->Entities + i;
+		if (Entity && Entity->BodyType == SIM_BODY_DYNAMIC) {
 			Sim_Push_Entity(Entity);
 		}
 	}
 
+#ifdef FLOW_DEBUG_RENDERING
+	flow_debug_renderer* DebugRenderer = Flow_Get_Renderer(Simulation->FlowSystem);
+	
+	sim_push_frame* PushFrame = Simulation->CurrentFrame;
+	PushFrame->FlowDebugCmdCount = DebugRenderer->CmdCount;
+	PushFrame->FlowDebugCmds = Arena_Push_Array(PushFrame->Arena, DebugRenderer->CmdCount, flow_debug_cmd);
+	Memory_Copy(PushFrame->FlowDebugCmds, DebugRenderer->Cmds, DebugRenderer->CmdCount * sizeof(flow_debug_cmd));
+#endif
+
 	Sim_End_Frame();
 
 	return true;
-}
-
-function void Sync_Simulation() {
-	engine* Engine = Get_Engine();
-
-	//Get the old frame and the new frame while locking to prevent the simulation
-	//from starting or finishing a frame while this occurs
-	OS_Mutex_Lock(Engine->SimFrameLock);
-	push_frame* OldFrame = NULL;
-	push_frame* NewFrame = NULL;
-	for (;;) {
-		b32 FreeFrame = false;
-
-		OldFrame = Engine->FirstFrame;
-		if (!OldFrame) break;
-
-		if (Time_Is_Newer(Engine->UpdateSimTime, OldFrame->Time)) {
-			push_frame* NextFrame = OldFrame->Next;
-			if (!NextFrame) {
-				break;
-			}
-
-			if (Time_Is_Newer(NextFrame->Time, Engine->UpdateSimTime)) {
-				NewFrame = NextFrame;
-				break;
-			}
-
-			SLL_Pop_Front(Engine->FirstFrame);
-			if (!Engine->FirstFrame) Engine->LastFrame = NULL;
-			OldFrame->Next = NULL;
-			SLL_Push_Front(Engine->FreeFrames, OldFrame);
-		} Invalid_Else;
-	}
-	OS_Mutex_Unlock(Engine->SimFrameLock);
-
-	//Set the new frame to let the update frame know if its still simulating or not
-
-	if (OldFrame) {
-
-		//If there is at least an old frame, update the entities with the old
-		//simulation frame to at least keep the rendering in sync and to assist
-		//in interpolation if there is a new frame
-
-		if (Is_Simulating() || NewFrame) {
-			for (size_t i = 0; i < OldFrame->CmdCount; i++) {
-				push_cmd* Cmd = OldFrame->Cmds + i;
-				entity* Entity = Get_Entity(Cmd->ID);
-				if (Entity) {
-					//Store old transforms in current transforms
-					Entity->Position = Cmd->Position;
-					Entity->Orientation = Cmd->Orientation;
-				}
-			}
-		} else {
-			for (pool_iter Iter = Pool_Begin_Iter(&Engine->World->Entities); Iter.IsValid; Pool_Iter_Next(&Iter)) {
-				entity* Entity = (entity*)Iter.Data;
-				if (Entity->ID.Index < Engine->World->SimEntities.Capacity) {
-					sim_entity* SimEntity = Engine->World->SimEntities.Entities + Entity->ID.Index;
-					if(SimEntity->IsAllocated) {
-						Entity->Position = SimEntity->Position;
-						Entity->Orientation = SimEntity->Orientation;
-					}
-				}
-			}
-		}
-
-		if (NewFrame) {
-			//If there is a new frame, interpolate between the two frames to get
-			//the entities actual position in the frame
-
-			Assert(Engine->UpdateSimTime.Interval == OldFrame->Time.Interval &&
-				(OldFrame->Time.Interval == NewFrame->Time.Interval ||
-				OldFrame->Time.Interval == NewFrame->Time.Interval - 1));
-		
-			f64 tAt = Engine->UpdateSimTime.dt - OldFrame->Time.dt;
-			f64 tInterp = tAt / SIM_HZ;
-
-			Assert(tInterp >= 0 && tInterp <= 1);
-
-			for (size_t i = 0; i < NewFrame->CmdCount; i++) {
-				push_cmd* Cmd = NewFrame->Cmds + i;
-				entity* Entity = Get_Entity(Cmd->ID);
-				if (Entity) {
-					Entity->Position = V3_Lerp(Entity->Position, (f32)tInterp, Cmd->Position);
-					Entity->Orientation = Quat_Lerp(Entity->Orientation, (f32)tInterp, Cmd->Orientation);
-				}
-			}
-		}
-
-		if (NewFrame) {
-			Time_Increment(&Engine->UpdateSimTime, Engine->dt);
-		}
-	}
 }
 
 function ENGINE_FUNCTION_DEFINE(Engine_Update_Impl) {
@@ -209,6 +124,12 @@ function ENGINE_FUNCTION_DEFINE(Engine_Update_Impl) {
 	Process_OS_Events(&Engine->UpdateOSEvents);
 
 	Sync_Simulation();
+
+	local u64 i = 0;
+	if (Mouse_Is_Pressed(MOUSE_KEY_LEFT)) {
+		Debug_Log("Down %d", i);
+		i++;
+	}
 
 	f32 dt = (f32)Engine->dt;
 	camera* Camera = &Engine->Camera;
@@ -228,7 +149,13 @@ function ENGINE_FUNCTION_DEFINE(Engine_Update_Impl) {
 	UI_Push_Parent(Box);
 
 	UI_Text_Formatted(UI_BOX_FLAG_RIGHT_ALIGN, "FPS: %d", (int)(1.0 / dt));
-	UI_Text_Formatted(UI_BOX_FLAG_RIGHT_ALIGN, "Is Simulating: %s", Is_Simulating() ? "true" : "false");
+	UI_Text_Formatted(UI_BOX_FLAG_RIGHT_ALIGN, "Is Simulating: %s", Is_Update_Simulating() ? "true" : "false");
+
+	UI_Text_Formatted(UI_BOX_FLAG_RIGHT_ALIGN, "Draw Colliders: %s###Button0", Engine->DrawColliders ? "true" : "false");
+	
+	if (UI_LMB_Pressed(UI_Get_Last_Box())) {
+		Engine->DrawColliders = !Engine->DrawColliders;
+	}
 
 	UI_Pop_Parent();
 
@@ -239,9 +166,47 @@ function ENGINE_FUNCTION_DEFINE(Engine_Update_Impl) {
 	world* World = World_Get();
 	for (pool_iter Iter = Pool_Begin_Iter(&World->Entities); Iter.IsValid; Pool_Iter_Next(&Iter)) {
 		entity* Entity = (entity*)Iter.Data;
+		if (Entity->Type == ENTITY_TYPE_PLAYER) {
+			Camera->Target = Entity->Position;
+		}
 		gfx_component* Component = Get_GFX_Component(Entity->GfxComponent);
 		Component->Transform = M4_Affine_Transform_Quat(Entity->Position, Entity->Orientation, Entity->Scale);
 	}
+
+	if (Engine->DrawColliders) {
+		v3 Color = V3(0.0f, 0.0f, 1.0f);
+		for (pool_iter Iter = Pool_Begin_Iter(&World->Entities); Iter.IsValid; Pool_Iter_Next(&Iter)) {
+			entity* Entity = (entity*)Iter.Data;
+			switch (Entity->Collider.Type) {
+				case SIM_COLLIDER_TYPE_SPHERE: {
+					f32 Radius = V3_Largest(Entity->Scale)*Entity->Collider.Sphere.Radius;
+					Draw_Sphere(DRAW_FLAG_LINE, Entity->Position, Radius, Color);
+				} break;
+
+				case SIM_COLLIDER_TYPE_BOX: {
+					v3 HalfExtent = V3_Mul_V3(Entity->Scale, Entity->Collider.Box.HalfExtent);
+					Draw_Box(DRAW_FLAG_LINE, Entity->Position, HalfExtent, Entity->Orientation, Color);
+				} break;
+			}
+		}
+	}
+
+#ifdef FLOW_DEBUG_RENDERING
+	if (Engine->DrawFlowCmds) {
+		if (Engine->OldFrame) {
+			size_t CmdCount = Engine->OldFrame->FlowDebugCmdCount;
+			flow_debug_cmd* FlowDebugCmds = Engine->OldFrame->FlowDebugCmds;
+		
+			for (size_t i = 0; i < CmdCount; i++) {
+				flow_debug_cmd* Cmd = FlowDebugCmds + i;
+				Draw_Sphere(0, Cmd->Penetration.P1, 0.02f, V3(1.0f, 0.0f, 0.0f));
+				Draw_Sphere(0, Cmd->Penetration.P2, 0.02f, V3(0.0f, 0.0f, 1.0f));
+
+				Draw_Arrow(Cmd->Penetration.P2, Cmd->Penetration.V, 0.02f, V3(0.0f, 1.0f, 1.0f));
+			}
+		}
+	}
+#endif
 
 	Render_Frame(&Engine->Renderer, Camera);
 	return true;
@@ -262,55 +227,124 @@ global engine_vtable Engine_VTable = {
 export_function ENGINE_FUNCTION_DEFINE(Engine_Initialize) {
 	Set_Engine(Engine);
 	Engine->VTable = &Engine_VTable;
+	Engine->JobSystem = Job_System_Create(1024, OS_Processor_Thread_Count(), 0);
+
+
 	Renderer_Init(&Engine->Renderer);
 	Audio_Init(&Engine->Audio);
-
-	Engine->SimArena = Arena_Create();
-	Engine->SimWaitEvent = OS_Event_Create();
-	Engine->SimFrameLock = OS_Mutex_Create();
-
+	Sim_Init(&Engine->Simulation);
 	Engine->World = World_Create(String_Lit("Default World"));
 
 	Create_Entity({
 		.Name = String_Lit("Entity A"),
 		.Type = ENTITY_TYPE_PLAYER,
-		.Position = V3(0.5f, -0.5f, 5.0f),
-		.Color = V4(0.0f, 1.0f, 0.0f, 1.0f),
+		.Position = V3(0.0f, 0.0f, 0.0f),
 		.MeshName = String_Lit("Box"),
 		.Material = {
 			.Diffuse = {
 				.IsTexture = true,
 				.TextureName = String_Lit("Brick_Color")
 			}
-		}
+		},
+		.BodyType = SIM_BODY_DYNAMIC,
+		.Friction = 0.7f,
+		.Collider = {
+			.Type = SIM_COLLIDER_TYPE_BOX,
+			.Box = { V3_All(1.0f), 5.0f }
+		},
+	});
+
+	Create_Entity({
+		.Name = String_Lit("Entity C"),
+		.Position = V3(0.0f, 3.0f, 0.0f),
+		.MeshName = String_Lit("Box"),
+		.Material = {
+			.Diffuse = {
+				.IsTexture = true,
+				.TextureName = String_Lit("Brick_Color")
+			}
+		},
+		.BodyType = SIM_BODY_DYNAMIC,
+		.Friction = 0.5f,
+		.Collider = {
+			.Type = SIM_COLLIDER_TYPE_BOX,
+			.Box = { V3_All(1.0f), 1.0f }
+		},
+	});
+
+	Create_Entity({
+		.Name = String_Lit("Entity D"),
+		.Position = V3(0.0f, 3.0f, 2.0f),
+		.MeshName = String_Lit("Box"),
+		.Material = {
+			.Diffuse = {
+				.IsTexture = true,
+				.TextureName = String_Lit("Brick_Color")
+			}
+		},
+		.BodyType = SIM_BODY_DYNAMIC,
+		.Friction = 0.5f,
+		.Collider = {
+			.Type = SIM_COLLIDER_TYPE_BOX,
+			.Box = { V3_All(1.0f), 1.0f }
+		},
+	});
+
+	Create_Entity({
+		.Name = String_Lit("Entity E"),
+		.Position = V3(0.0f, 3.0f, 4.0f),
+		.MeshName = String_Lit("Box"),
+		.Material = {
+			.Diffuse = {
+				.IsTexture = true,
+				.TextureName = String_Lit("Brick_Color")
+			}
+		},
+		.BodyType = SIM_BODY_DYNAMIC,
+		.Friction = 0.5f,
+		.Collider = {
+			.Type = SIM_COLLIDER_TYPE_BOX,
+			.Box = { V3_All(1.0f), 1.0f }
+		},
+	});
+
+	Create_Entity({
+		.Name = String_Lit("Entity F"),
+		.Position = V3(0.0f, 3.0f, 6.0f),
+		.MeshName = String_Lit("Box"),
+		.Material = {
+			.Diffuse = {
+				.IsTexture = true,
+				.TextureName = String_Lit("Brick_Color")
+			}
+		},
+		.BodyType = SIM_BODY_DYNAMIC,
+		.Friction = 0.5f,
+		.Collider = {
+			.Type = SIM_COLLIDER_TYPE_BOX,
+			.Box = { V3_All(1.0f), 1.0f }
+		},
 	});
 
 	Create_Entity({
 		.Name = String_Lit("Entity B"),
-		.Position = V3(0.0f, 0.0f, -2.5f),
-		.Color = V4(0.0f, 0.0f, 1.0f, 1.0f),
+		.Position = V3(0.0f, 0.0f, -1.1f),
+		.Scale = V3(30.0f, 30.0f, 0.1f),
 		.MeshName = String_Lit("Box"),
 		.Material = { 
 			.Diffuse = {
 				.IsTexture = true,
-				.TextureName = String_Lit("Smile")
+				.TextureName = String_Lit("Brick_Color")
 			}
-		}
+		},
+		.Friction = 0.7f,
+		.Collider = {
+			.Type = SIM_COLLIDER_TYPE_BOX,
+			.Box = { V3_All(1.0f) }
+		},
 	});
 
 	Camera_Init(&Engine->Camera, V3_Zero());
-
-	editable_mesh* DebugBoxLineMesh = Create_Box_Line_Editable_Mesh();
-	editable_mesh* DebugSphereLineMesh = Create_Sphere_Line_Editable_Mesh(60);
-	editable_mesh* DebugSphereTriangleMesh = Create_Sphere_Mesh(3);
-
-	Engine->DebugBoxLineMesh        = Create_GFX_Mesh(DebugBoxLineMesh, String_Lit("Debug_Box_Line"));
-	Engine->DebugSphereLineMesh     = Create_GFX_Mesh(DebugSphereLineMesh, String_Lit("Debug_Sphere_Line"));
-	Engine->DebugSphereTriangleMesh = Create_GFX_Mesh(DebugSphereTriangleMesh, String_Lit("Debug_Sphere_Triangle"));
-
-	Delete_Editable_Mesh(DebugBoxLineMesh);
-	Delete_Editable_Mesh(DebugSphereLineMesh);
-	Delete_Editable_Mesh(DebugSphereTriangleMesh);
 
 	Engine->UpdateInput.MouseP = V2(FLT_MAX, FLT_MAX);
 	Engine->SimInput.MouseP = V2(FLT_MAX, FLT_MAX);
@@ -324,13 +358,16 @@ export_function ENGINE_FUNCTION_DEFINE(Engine_Initialize) {
 
 	Engine->ThreadLocalStorage = OS_TLS_Create();
 
-	Engine->JobSystem = Job_System_Create(1024, OS_Processor_Thread_Count(), 0);
-
 	Play_Sound(String_Lit("TestMusic"), SOUND_FLAG_LOOPING, 0.2f);
+	Engine->DrawColliders = true;
 
 	Engine_Start_Running();
-	Resume_Simulation();
+	Sim_Resume();
 	Scratch_Release();
+
+#ifdef FLOW_DEBUG_RENDERING
+	Engine->DrawFlowCmds = false;
+#endif
 
 	return true;
 }

@@ -4,26 +4,6 @@
 #include <base.h>
 #include <meta_program/meta_defines.h>
 
-#include "mesh.h"
-#include "audio/audio.h"
-#include "renderer/renderer.h"
-#include "world/world.h"
-
-#include "accumulator_loop.h"
-#include "camera.h"
-#include "font.h"
-#include "os/os_events.h"
-#include "ui/ui.h"
-
-#define SIM_HZ (1.0/60.0)
-
-struct engine;
-
-struct state {
-	b16 WasOn;
-	b16 IsOn;
-};
-
 #define DT_PER_INTERVAL 20.0
 struct high_res_time {
 	f64 dt;
@@ -45,6 +25,33 @@ function inline void Time_Increment(high_res_time* Time, f64 dt) {
 		Time->Interval++;
 	}
 }
+
+typedef pool_id entity_id;
+enum entity_type {
+	ENTITY_TYPE_STATIC,
+	ENTITY_TYPE_PLAYER
+};
+
+#include "audio/audio.h"
+#include "renderer/renderer.h"
+#include "mesh.h"
+#include "simulation/simulation.h"
+#include "world/world.h"
+
+#include "accumulator_loop.h"
+#include "camera.h"
+#include "font.h"
+#include "os/os_events.h"
+#include "ui/ui.h"
+
+#define SIM_HZ (1.0/60.0)
+
+struct engine;
+
+struct state {
+	b16 WasOn;
+	b16 IsOn;
+};
 
 inline b32 State_Turned_On(state* State) { return State->IsOn && !State->WasOn; }
 inline b32 State_Turned_Off(state* State) { return !State->IsOn && State->WasOn; }
@@ -73,23 +80,10 @@ struct engine_thread_context {
 	input_manager* InputManager;
 };
 
-struct push_cmd {
-	entity_id ID;
-	v3 		  Position;
-	quat 	  Orientation;
-};
-
-#define MAX_PUSH_CMD_COUNT 1024
-struct push_frame {
-	push_cmd 	  Cmds[MAX_PUSH_CMD_COUNT];
-	u32 	 	  CmdCount;
-	high_res_time Time;
-
-	push_frame* Next;
-};
 
 struct engine {
 	engine_vtable* VTable;
+	arena* 		   Arena;
 	base* 		   Base;
 	job_system*    JobSystem;
 	renderer       Renderer;
@@ -106,23 +100,20 @@ struct engine {
 	os_event_queue UpdateOSEvents;
 	os_event_queue SimOSEvents;
 
-	arena* 	   SimArena;
-	atomic_b32 IsSimulating;
-	os_event*  SimWaitEvent;
-	os_mutex*  SimFrameLock;
-	push_frame* FirstFrame;
-	push_frame* CurrentFrame;
-	push_frame* LastFrame;
-	push_frame* FreeFrames;
-	high_res_time SimTime;
-	high_res_time UpdateSimTime;
+	sim_push_frame* OldFrame;
+	sim_push_frame* NewFrame;
+
+	simulation Simulation;
+
+	mesh_slot MeshSlots[MAX_MESH_SLOT_COUNT];
+
+	b32 DrawColliders;
+
+#ifdef FLOW_DEBUG_RENDERING
+	b32 DrawFlowCmds;
+#endif
 
 	camera Camera;
-
-	gfx_mesh* DebugBoxLineMesh;
-	gfx_mesh* DebugSphereLineMesh;
-	gfx_mesh* DebugCapsuleLineMesh;
-	gfx_mesh* DebugSphereTriangleMesh;
 
 	atomic_b32 IsRunning;
 };
@@ -170,8 +161,13 @@ function inline b32 Engine_Is_Running() {
 	return Atomic_Load_B32(&Engine->IsRunning);
 }
 
+function simulation* Simulation_Get() {
+	return &Get_Engine()->Simulation;
+}
+
 #define UI_Scale() Get_Engine()->UIScale
 #define Is_Focused() Atomic_Load_B32(&Get_Engine()->IsFocused)
-#define Is_Simulating() Atomic_Load_B32(&Get_Engine()->IsSimulating)
+#define Is_Simulating() Atomic_Load_B32(&Simulation_Get()->IsSimulating)
+#define Is_Update_Simulating() (Is_Simulating() || Get_Engine()->NewFrame)
 
 #endif

@@ -1,3 +1,12 @@
 [submodule "code/third_party/base"]
 	path = code/third_party/base
 	url = https://github.com/JJ-Karambasis/base.git
+[submodule "code/third_party/flow"]
+	path = code/third_party/flow
+	url = https://github.com/JJ-Karambasis/flow.git
+[submodule "code/third_party/CoACD"]
+	path = code/third_party/CoACD
+	url = https://github.com/SarahWeiii/CoACD.git
+[submodule "code/third_party/JoltPhysics"]
+	path = code/third_party/JoltPhysics
+	url = https://github.com/jrouwe/JoltPhysics.git

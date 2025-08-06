@@ -46,11 +46,11 @@ function inline ui_font UI_Font(font* Font, f32 Size) {
 }
 
 enum {
-	UI_BOX_STATE_NONE,
-	UI_BOX_STATE_HOVERING,
-	UI_BOX_STATE_MOUSE_LEFT_DOWN,
-	UI_BOX_STATE_MOUSE_MIDDLE_DOWN,
-	UI_BOX_STATE_MOUSE_RIGHT_DOWN
+	UI_BOX_STATE_NONE = 0,
+	UI_BOX_STATE_HOVERING = (1 << 0),
+	UI_BOX_STATE_MOUSE_LEFT_DOWN = (1 << 1),
+	UI_BOX_STATE_MOUSE_MIDDLE_DOWN = (1 << 2),
+	UI_BOX_STATE_MOUSE_RIGHT_DOWN = (1 << 3)
 };
 typedef u64 ui_box_state;
 
@@ -84,6 +84,8 @@ struct ui_box {
 
 	u64 BuildIndex;
 };
+
+#define UI_LMB_Pressed(box) ((((box)->CurrentState & UI_BOX_STATE_MOUSE_LEFT_DOWN) == UI_BOX_STATE_MOUSE_LEFT_DOWN) && (((box)->LastState & UI_BOX_STATE_MOUSE_LEFT_DOWN) != UI_BOX_STATE_MOUSE_LEFT_DOWN))
 
 struct ui_box_hash_slot {
 	ui_box* FirstBox;

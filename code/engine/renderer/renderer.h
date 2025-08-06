@@ -36,16 +36,12 @@ struct gfx_sampler {
 	gdi_handle 	   Sampler;
 };
 
+typedef pool_id gfx_mesh_id;
 struct gfx_mesh {
-	u64 	   Hash;
 	gdi_handle VtxBuffers[2];
 	gdi_handle IdxBuffer;
 	u32 	   VtxCount;
 	u32 	   IdxCount;
-	u32 	   PartCount;
-	mesh_part* Parts;
-	gfx_mesh*  Next;
-	gfx_mesh*  Prev;
 };
 
 struct gfx_mesh_slot {
@@ -75,16 +71,15 @@ struct material_info {
 };
 
 struct gfx_component {
-	m4_affine Transform;
-	gfx_mesh* Mesh;
-	material  Material;
+	m4_affine   Transform;
+	gfx_mesh_id Mesh;
+	material    Material;
 };
 typedef pool_id gfx_component_id;
 
 struct gfx_component_create_info {
 	m4_affine 	  Transform;
-	v4 			  Color;
-	string 		  MeshName;
+	gfx_mesh_id   Mesh;
 	material_info Material;
 };
 
@@ -142,6 +137,7 @@ struct shader_manager {
 	//Basic
 	gdi_handle BasicShader;
 	gdi_handle BasicLineShader;
+	gdi_handle BasicLineNoDepthShader;
 
 	//Entity
 	shader_data EntityShaderData;
@@ -153,13 +149,20 @@ struct shader_manager {
 	shader_data UIShaderData;
 };
 
-#define MAX_MESH_SLOT_COUNT (4096)
-#define MESH_SLOT_MASK (MAX_MESH_SLOT_COUNT - 1)
+struct render_context {
+	v2 		  ViewDim;
+	m4_affine WorldToView;
+	m4 		  ViewToClip;
+	m4 		  WorldToClip;
+};
+
+#include "draw.h"
+
 struct renderer {
 	arena* Arena;
 	gdi* GDI;
 	pool GfxComponents;
-	gfx_mesh_slot MeshSlots[MAX_MESH_SLOT_COUNT];
+	pool GfxMeshes;
 	texture_manager TextureManager;
 	shader_manager ShaderManager;
 	
@@ -169,9 +172,14 @@ struct renderer {
 	gfx_sampler_id DefaultSampler;
 	gfx_texture_id WhiteTexture;
 
+	draw_primitives DrawPrimitives;
+
 	v2 LastDim;
 };
 
+struct editable_mesh;
+
+function gfx_mesh_id Create_GFX_Mesh(editable_mesh* EditableMesh, string DebugName);
 function gfx_component_id Create_GFX_Component(const gfx_component_create_info& CreateInfo);
 function gfx_texture_id Create_GFX_Texture(const gfx_texture_create_info& CreateInfo);
 

@@ -53,5 +53,19 @@ struct mesh_edge_table {
 	mesh_edge_table_slot* Slots;
 };
 
+#define MAX_MESH_SLOT_COUNT (4096)
+#define MESH_SLOT_MASK (MAX_MESH_SLOT_COUNT - 1)
+struct mesh {
+	u64 	   	Hash;
+	gfx_mesh_id GfxMesh;
+
+	mesh* Next;
+	mesh* Prev;
+};
+
+struct mesh_slot {
+	mesh* First;
+	mesh* Last;
+};
 
 #endif

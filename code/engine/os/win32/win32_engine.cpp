@@ -431,6 +431,7 @@ function JOB_CALLBACK_DEFINE(Win32_Engine_Sim_Job) {
 
 function JOB_CALLBACK_DEFINE(Win32_Sim_Job) {
 	engine* Engine = Get_Engine();
+	simulation* Simulation = &Engine->Simulation;
 
 	accumulator_loop SimAccumLoop = {};
 	b32 IsPaused = !Is_Simulating();
@@ -464,7 +465,7 @@ function JOB_CALLBACK_DEFINE(Win32_Sim_Job) {
 						//We signal to all threads waiting for simulations to pause
 						//using the event 
 						IsPaused = true;
-						OS_Event_Signal(Engine->SimWaitEvent);
+						OS_Event_Signal(Simulation->WaitEvent);
 					}
 				}
 			}

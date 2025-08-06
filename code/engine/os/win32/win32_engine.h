@@ -36,7 +36,6 @@ struct win32_audio {
 };
 
 struct win32_engine : public engine {
-	arena* 		Arena;
 	win32_audio Audio;
 	win32_dll   EngineDLL;
 	HWND MainWindow;

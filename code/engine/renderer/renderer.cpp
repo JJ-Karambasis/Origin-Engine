@@ -5,12 +5,30 @@ function renderer* Renderer_Get() {
 	return &Get_Engine()->Renderer;
 }
 
-function gfx_mesh* Create_GFX_Mesh(editable_mesh* EditableMesh, string DebugName) {
+function void Draw_Mesh(gdi_render_pass* RenderPass, gfx_mesh* Mesh) {
+	Render_Set_Vtx_Buffer(RenderPass, 0, Mesh->VtxBuffers[0]);
+	if (!GDI_Is_Null(Mesh->VtxBuffers[1])) {
+		Render_Set_Vtx_Buffer(RenderPass, 1, Mesh->VtxBuffers[1]);
+	}
+
+	Render_Set_Idx_Buffer(RenderPass, Mesh->IdxBuffer, GDI_IDX_FORMAT_32_BIT);
+	Render_Draw_Idx(RenderPass, Mesh->IdxCount, 0, 0);
+}
+
+function inline gfx_mesh* Get_GFX_Mesh(gfx_mesh_id ID) {
+	gfx_mesh* Result = (gfx_mesh*)Pool_Get(&Renderer_Get()->GfxMeshes, ID);
+	return Result;
+}
+
+#include "draw.cpp"
+
+function gfx_mesh_id Create_GFX_Mesh(editable_mesh* EditableMesh, string DebugName) {
 	Assert(Editable_Mesh_Has_Position(EditableMesh));
 	
 	arena* Scratch = Scratch_Get();
 	renderer* Renderer = Renderer_Get();
-	gfx_mesh* Mesh = (gfx_mesh*)Arena_Push(Renderer->Arena, sizeof(gfx_mesh)+(EditableMesh->PartCount*sizeof(mesh_part)));
+	gfx_mesh_id Result = Pool_Allocate(&Renderer->GfxMeshes);
+	gfx_mesh* Mesh = (gfx_mesh*)Pool_Get(&Renderer->GfxMeshes, Result);
 
 	gdi_buffer_create_info VtxBufferInfo = {
 		.Size = EditableMesh->VertexCount*sizeof(v3),
@@ -50,10 +68,7 @@ function gfx_mesh* Create_GFX_Mesh(editable_mesh* EditableMesh, string DebugName
 
 	Mesh->VtxCount = EditableMesh->VertexCount;
 	Mesh->IdxCount = EditableMesh->IndexCount;
-	Mesh->Parts = (mesh_part*)(Mesh + 1);
-	Mesh->PartCount = EditableMesh->PartCount;
-	Memory_Copy(Mesh->Parts, EditableMesh->Parts, sizeof(mesh_part)*EditableMesh->PartCount);
-	return Mesh;
+	return Result;
 }
 
 function inline gfx_component* Get_GFX_Component(gfx_component_id ID) {
@@ -279,41 +294,6 @@ function inline gfx_sampler* Get_GFX_Sampler(gfx_sampler_id ID) {
 
 function gfx_component_id Create_GFX_Component(const gfx_component_create_info& CreateInfo) {
 	renderer* Renderer = Renderer_Get();
-	
-	u64 Hash = U64_Hash_String(CreateInfo.MeshName);
-	u64 SlotIndex = (Hash & MESH_SLOT_MASK);
-	gfx_mesh_slot* Slot = Renderer->MeshSlots + SlotIndex;
-	gfx_mesh* Mesh = NULL;
-	for (gfx_mesh* HashMesh = Slot->First; HashMesh; HashMesh = HashMesh->Next) {
-		if (HashMesh->Hash == Hash) {
-			Mesh = HashMesh;
-			break;
-		}
-	}
-
-	if (!Mesh) {
-		arena* Scratch = Scratch_Get();
-		string FilePath = String_Format((allocator*)Scratch, "meshes/%.*s.fbx", CreateInfo.MeshName.Size, CreateInfo.MeshName.Ptr);
-		editable_mesh* EditableMesh = Create_Editable_Mesh_From_File(FilePath);
-
-		if (EditableMesh) {
-			Mesh = Create_GFX_Mesh(EditableMesh, CreateInfo.MeshName);
-			Mesh->Hash = Hash;
-			DLL_Push_Back(Slot->First, Slot->Last, Mesh);
-			Delete_Editable_Mesh(EditableMesh);
-		}
-		Scratch_Release();
-	}
-
-	if (!Mesh) {
-		Debug_Log("Could not find mesh '%.*s'", CreateInfo.MeshName.Size, CreateInfo.MeshName.Ptr);
-		return Empty_Pool_ID();
-	}
-
-	if (Mesh->PartCount != 1) {
-		Debug_Log("Mesh must only support one material for now");
-		return Empty_Pool_ID();
-	}
 
 	material_info Info = CreateInfo.Material;
 	material Material = {};
@@ -332,7 +312,7 @@ function gfx_component_id Create_GFX_Component(const gfx_component_create_info& 
 	gfx_component* Component = (gfx_component*)Pool_Get(&Renderer->GfxComponents, ID);
 	Component->Transform = CreateInfo.Transform;
 	Component->Material = Material;
-	Component->Mesh = Mesh;
+	Component->Mesh = CreateInfo.Mesh;
 
 	return ID;
 }
@@ -479,16 +459,6 @@ function void Draw_UI(gdi_render_pass* RenderPass, ui* UI) {
 	Draw_UI_Box(RenderPass, UI, UI->Root);
 }
 
-function void Draw_Mesh(gdi_render_pass* RenderPass, gfx_mesh* Mesh) {
-	Render_Set_Vtx_Buffer(RenderPass, 0, Mesh->VtxBuffers[0]);
-	if (!GDI_Is_Null(Mesh->VtxBuffers[1])) {
-		Render_Set_Vtx_Buffer(RenderPass, 1, Mesh->VtxBuffers[1]);
-	}
-
-	Render_Set_Idx_Buffer(RenderPass, Mesh->IdxBuffer, GDI_IDX_FORMAT_32_BIT);
-	Render_Draw_Idx(RenderPass, Mesh->IdxCount, 0, 0);
-}
-
 
 function shader* Get_Shader(string ShaderName) {
 	renderer* Renderer = Renderer_Get();
@@ -593,6 +563,12 @@ function b32 Hot_Reload_Shaders() {
 			ShaderCreateInfo.DebugName = String_Lit("Basic Line Shader");
 			ShaderManager->BasicLineShader = GDI_Create_Shader(&ShaderCreateInfo);
 			if (GDI_Is_Null(ShaderManager->BasicLineShader)) return false;
+
+			Memory_Clear(&ShaderCreateInfo.DepthState, sizeof(gdi_depth_state));
+			ShaderCreateInfo.DepthState.DepthFormat = GDI_FORMAT_D32_FLOAT;
+			ShaderCreateInfo.DebugName = String_Lit("Basic Line Shader No Depth");
+			ShaderManager->BasicLineNoDepthShader = GDI_Create_Shader(&ShaderCreateInfo);
+			if (GDI_Is_Null(ShaderManager->BasicLineNoDepthShader)) return false;
 		}
 	}
 
@@ -706,6 +682,7 @@ function b32 Hot_Reload_Shaders() {
 function b32 Renderer_Init(renderer* Renderer) {
 	Renderer->Arena = Arena_Create();
 	Renderer->GfxComponents = Pool_Init(sizeof(gfx_component));
+	Renderer->GfxMeshes = Pool_Init(sizeof(gfx_mesh));
 
 	{
 		texture_manager* TextureManager = &Renderer->TextureManager;
@@ -777,19 +754,19 @@ function b32 Renderer_Init(renderer* Renderer) {
 		return false;
 	}
 
+	if (!Draw_Primitives_Init(&Renderer->DrawPrimitives)) {
+		return false;
+	}
+
 	return true;
 }
 
-function void Update_Entity_Data(camera* CameraView, v2 ViewDim) {
+function void Update_Entity_Data(render_context* Context) {
 	renderer* Renderer = Renderer_Get();
 	shader_manager* ShaderManager = &Renderer->ShaderManager;
 
-	m4_affine WorldToView = Camera_Get_View(CameraView);
-	m4 ViewToClip = M4_Perspective(To_Radians(60.0f), ViewDim.x / ViewDim.y, 0.01f, 100.0f);
-	m4 WorldToClip = M4_Affine_Mul_M4(&WorldToView, &ViewToClip);
-
 	entity_shader_data* ShaderData = (entity_shader_data*)GDI_Map_Buffer(ShaderManager->EntityShaderData.Buffer);
-	ShaderData->WorldToClip = M4_Transpose(&WorldToClip);
+	ShaderData->WorldToClip = M4_Transpose(&Context->WorldToClip);
 	GDI_Unmap_Buffer(ShaderManager->EntityShaderData.Buffer);
 
 	entity_data* EntityData = (entity_data*)GDI_Map_Buffer(ShaderManager->EntityData.Buffer);
@@ -856,16 +833,30 @@ function b32 Render_Frame(renderer* Renderer, camera* CameraView) {
 		Renderer->LastDim = ViewDim;
 	}
 
-	Update_Entity_Data(CameraView, ViewDim);
+	m4_affine WorldToView = Camera_Get_View(CameraView);
+	m4 ViewToClip = M4_Perspective(To_Radians(60.0f), ViewDim.x / ViewDim.y, 0.1f, 10000.0f);
+	m4 WorldToClip = M4_Affine_Mul_M4(&WorldToView, &ViewToClip);
+
+	render_context RenderContext = {
+		.ViewDim = ViewDim,
+		.WorldToView = WorldToView,
+		.ViewToClip = ViewToClip,
+		.WorldToClip = WorldToClip
+	};
+
+	Update_Entity_Data(&RenderContext);
 
 	{
 		gdi_render_pass_begin_info RenderPassInfo = {
 			.RenderTargetViews = { GDI_Get_View() },
 			.DepthBufferView = Renderer->DepthView,
-			.ClearState = {
+			.ClearColors = { {
 				.ShouldClear = true,
-				.ClearColor = { { .F32 = { 0, 0, 0, 1 } }  },
-				.ClearDepth = 1.0f
+				.F32 = { 0, 0, 0, 1 },
+			} },
+			.ClearDepth = {
+				.ShouldClear = true,
+				.Depth = 1.0f
 			}
 		};
 		gdi_render_pass* RenderPass = GDI_Begin_Render_Pass(&RenderPassInfo);
@@ -882,17 +873,22 @@ function b32 Render_Frame(renderer* Renderer, camera* CameraView) {
 		s32 EntityIndex = 0;
 		for (pool_iter Iter = Pool_Begin_Iter(&Renderer->GfxComponents); Iter.IsValid; Pool_Iter_Next(&Iter)) {
 			gfx_component* Component = (gfx_component*)Iter.Data;
-			entity_draw_data DrawData = {
-				.EntityIndex = EntityIndex
-			};
-			Render_Set_Push_Constants(RenderPass, &DrawData, sizeof(entity_draw_data));
-			Draw_Mesh(RenderPass, Component->Mesh);
-			EntityIndex++;
+			gfx_mesh* Mesh = Get_GFX_Mesh(Component->Mesh);
+			if (Mesh) {
+				entity_draw_data DrawData = {
+					.EntityIndex = EntityIndex
+				};
+				Render_Set_Push_Constants(RenderPass, &DrawData, sizeof(entity_draw_data));
+				Draw_Mesh(RenderPass, Mesh);
+				EntityIndex++;
+			}
 		}
 
 		GDI_End_Render_Pass(RenderPass);
 		GDI_Submit_Render_Pass(RenderPass);
 	}
+
+	if (!Render_Draw_Primitives(&RenderContext)) return false;
 
 	{
 		gdi_render_pass_begin_info RenderPassInfo = { .RenderTargetViews = { GDI_Get_View() } };

@@ -32,7 +32,7 @@ vs_output VS_Main(vs_input Input) {
 	return Result;
 }
 
-static v3 LightColor = v3(1.0f, 1.0f, 1.0f)*3;
+static v3 LightColor = v3(1.0f, 1.0f, 1.0f);
 static v3 LightDirection = v3(0.0f, 0.0f, -1.0f);
 
 v4 PS_Main(vs_output Pxl) : SV_TARGET0 {
