@@ -16,8 +16,7 @@ struct draw_primitive {
 Dynamic_Array_Define_Type(draw_primitive);
 
 struct draw_primitives {
-	gdi_handle DepthBuffer;
-	gdi_handle DepthView;
+	gfx_texture_id DepthBuffer;
 
 	gfx_mesh* BoxLineMesh;
 	gfx_mesh* SphereLineMesh;

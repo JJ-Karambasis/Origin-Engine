@@ -8,6 +8,7 @@
 #define m3        float3x3
 #define m4 		  float4x4
 #define m4_affine float4x3
+#define f32 float
 
 #include "shader_data.h"
 

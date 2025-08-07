@@ -54,6 +54,12 @@ enum {
 };
 typedef u64 ui_box_state;
 
+struct ui;
+struct ui_box;
+
+#define UI_CUSTOM_DRAW_CALLBACK(name) void name(gdi_render_pass* RenderPass, ui* UI, ui_box* Box, void* UserData)
+typedef UI_CUSTOM_DRAW_CALLBACK(ui_custom_draw_callback_func);
+
 struct ui_box {
 	ui_box_id ID;
 
@@ -77,10 +83,14 @@ struct ui_box {
 	ui_font Font;
 	string DisplayString;
 	v2 DisplayStringDim;
+	gfx_texture_id Texture;
 	v2 FixedDim;
 	v2 FixedP;
 
 	rect2 Rect;
+
+	ui_custom_draw_callback_func* CustomDrawCallback;
+	void* CustomDrawCallbackUserData;
 
 	u64 BuildIndex;
 };

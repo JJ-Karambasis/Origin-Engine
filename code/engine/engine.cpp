@@ -147,6 +147,7 @@ function ENGINE_FUNCTION_DEFINE(Engine_Update_Impl) {
 	UI_Set_Position(Box, P);
 
 	UI_Push_Parent(Box);
+	UI_Set_Next_Text_Color(V4(1.0f, 1.0f, 0.0f, 1.0f));
 
 	UI_Text_Formatted(UI_BOX_FLAG_RIGHT_ALIGN, "FPS: %d", (int)(1.0 / dt));
 	UI_Text_Formatted(UI_BOX_FLAG_RIGHT_ALIGN, "Is Simulating: %s", Is_Update_Simulating() ? "true" : "false");
@@ -160,6 +161,17 @@ function ENGINE_FUNCTION_DEFINE(Engine_Update_Impl) {
 	UI_Pop_Parent();
 
 	UI_Pop_Font();
+
+	UI_Set_Next_Fixed_Size(V2_Mul_S(Renderer_Get()->LastDim, 0.5f));
+	UI_Set_Next_Texture(Renderer_Get()->DepthBuffer);
+	UI_Set_Next_Background_Color(V4_All(1.0f));
+	UI_Make_Box_From_String(0, String_Lit("Depth Buffer"));
+
+	draw_linear_depth_data* DrawLinearDepth = Arena_Push_Struct(UI_Build_Arena(), draw_linear_depth_data);
+	DrawLinearDepth->ZNear = Camera->ZNear;
+	DrawLinearDepth->ZFar = Camera->ZFar;
+
+	UI_Set_Draw_Callback(UI_Get_Last_Box(), Draw_Linear_Depth, DrawLinearDepth);
 
 	UI_End();
 
@@ -375,6 +387,9 @@ export_function ENGINE_FUNCTION_DEFINE(Engine_Initialize) {
 export_function ENGINE_FUNCTION_DEFINE(Engine_Reload) {
 	Set_Engine(Engine);
 	Engine->VTable = &Engine_VTable;
+
+	Simulation_Reload(&Engine->Simulation);
+
 	return true;
 }
 

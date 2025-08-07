@@ -24,10 +24,11 @@ struct gfx_texture {
 };
 
 struct gfx_texture_create_info {
-	v2i        Dim;
-	gdi_format Format;
-	buffer*    Texels;
-	string     DebugName;
+	v2i        		  Dim;
+	gdi_format 		  Format;
+	gdi_texture_usage Usage = GDI_TEXTURE_USAGE_SAMPLED;
+	buffer*    		  Texels;
+	string     		  DebugName;
 };
 
 typedef slot_id gfx_sampler_id;
@@ -147,6 +148,9 @@ struct shader_manager {
 	//UI
 	gdi_handle UIShader;
 	shader_data UIShaderData;
+
+	//Linearize Depth (Type of UI Shader)
+	gdi_handle LinearizeDepthShader;
 };
 
 struct render_context {
@@ -166,8 +170,7 @@ struct renderer {
 	texture_manager TextureManager;
 	shader_manager ShaderManager;
 	
-	gdi_handle DepthBuffer;
-	gdi_handle DepthView;
+	gfx_texture_id DepthBuffer;
 
 	gfx_sampler_id DefaultSampler;
 	gfx_texture_id WhiteTexture;
@@ -175,6 +178,11 @@ struct renderer {
 	draw_primitives DrawPrimitives;
 
 	v2 LastDim;
+};
+
+struct draw_linear_depth_data {
+	f32 ZNear;
+	f32 ZFar;
 };
 
 struct editable_mesh;

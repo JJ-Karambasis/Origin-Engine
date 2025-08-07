@@ -3,6 +3,9 @@ function void Camera_Init(camera* Camera, v3 Target) {
 	Camera->Target   = Target;
 	Camera->Distance = 3.162f;
 	Camera->Pitch    = To_Radians(16.0f);
+	Camera->ZNear    = 0.1f;
+	Camera->ZFar     = 10000.0f;
+	Camera->FieldOfView = To_Radians(60.0f);
 }
 
 function m3 Camera_Get_Orientation(camera* Camera) {

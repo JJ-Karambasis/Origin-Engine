@@ -39,6 +39,9 @@ pushd %data_path%\shaders
 
 	%dxc_path% %hlsl_vtx_flags% %shader_path%\ui.hlsl -Fo ui_vtx.shader
 	%dxc_path% %hlsl_pxl_flags% %shader_path%\ui.hlsl -Fo ui_pxl.shader
+
+	%dxc_path% %hlsl_vtx_flags% %shader_path%\linearize_depth.hlsl -Fo linearize_depth_vtx.shader
+	%dxc_path% %hlsl_pxl_flags% %shader_path%\linearize_depth.hlsl -Fo linearize_depth_pxl.shader
 popd
 
 :skip_shaders

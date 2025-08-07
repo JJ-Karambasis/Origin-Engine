@@ -20,8 +20,6 @@ function inline gfx_mesh* Get_GFX_Mesh(gfx_mesh_id ID) {
 	return Result;
 }
 
-#include "draw.cpp"
-
 function gfx_mesh_id Create_GFX_Mesh(editable_mesh* EditableMesh, string DebugName) {
 	Assert(Editable_Mesh_Has_Position(EditableMesh));
 	
@@ -104,7 +102,7 @@ function gfx_texture_id Create_GFX_Texture(const gfx_texture_create_info& Create
 	gdi_texture_create_info TextureInfo = {
 		.Format = CreateInfo.Format,
 		.Dim = CreateInfo.Dim,
-		.Usage = GDI_TEXTURE_USAGE_SAMPLED,
+		.Usage = CreateInfo.Usage,
 		.MipCount = 1,
 		.InitialData = CreateInfo.Texels,
 		.DebugName = CreateInfo.DebugName
@@ -151,6 +149,8 @@ function inline gfx_texture* Get_GFX_Texture(gfx_texture_id ID) {
 	gfx_texture* Result = TextureManager->Textures + ID.Index;
 	return Result;
 }
+
+#include "draw.cpp"
 
 function inline gfx_texture* Get_Texture(string TextureName, b32 IsSRGB) {
 	renderer* Renderer = Renderer_Get();
@@ -423,26 +423,60 @@ function void Draw_Text_Formatted(gdi_render_pass* RenderPass, font* Font, v2 P,
 	Scratch_Release();
 }
 
-function void Draw_UI_Box(gdi_render_pass* RenderPass, ui* UI, ui_box* Box) {
+function UI_CUSTOM_DRAW_CALLBACK(Draw_Linear_Depth) {
 	renderer* Renderer = Renderer_Get();
-	ui_draw_data DrawData = {
-		.TextureIndex = (s32)Renderer->WhiteTexture.Index,
-		.SamplerIndex = (s32)Renderer->DefaultSampler.Index
+	shader_manager* ShaderManager = &Renderer->ShaderManager;
+
+	draw_linear_depth_data* LinearDepthData = (draw_linear_depth_data*)UserData;
+	
+	Render_Set_Shader(RenderPass, ShaderManager->LinearizeDepthShader);
+
+	gfx_texture* Texture = Get_GFX_Texture(Box->Texture);	
+	linearize_depth_draw_data DrawData = {
+		.TextureIndex = (s32)Box->Texture.Index,
+		.SamplerIndex = (s32)Renderer->DefaultSampler.Index,
+		.ZNear = LinearDepthData->ZNear,
+		.ZFar = LinearDepthData->ZFar
 	};
 
-	Render_Set_Push_Constants(RenderPass, &DrawData, sizeof(ui_draw_data));
-
+	Render_Set_Push_Constants(RenderPass, &DrawData, sizeof(linearize_depth_draw_data));
 	v4 BackgroundColor = Box->BackgroundColor;
-	if (Box->CurrentState & UI_BOX_STATE_HOVERING) {
-		v3 HSV = RGB_To_HSV(BackgroundColor.xyz);
-		HSV.y *= 0.5f;
-		BackgroundColor.xyz = HSV_To_RGB(HSV);
-	}
-
 	BackgroundColor.xyz = V3_Mul_S(BackgroundColor.xyz, BackgroundColor.w);
 
 	IM_Push_Rect2D_Color_UV_Norm(Box->Rect.p0, Box->Rect.p1, BackgroundColor);
 	IM_Flush(RenderPass);
+}
+
+function void Draw_UI_Box(gdi_render_pass* RenderPass, ui* UI, ui_box* Box) {
+	renderer* Renderer = Renderer_Get();
+
+	if (Box->CustomDrawCallback) {
+		gdi_handle Shader = Render_Get_Shader(RenderPass);
+		Box->CustomDrawCallback(RenderPass, UI, Box, Box->CustomDrawCallbackUserData);
+		Render_Set_Shader(RenderPass, Shader);
+	} else {
+		gfx_texture* Texture = Get_GFX_Texture(Box->Texture);
+		u32 TextureIndex = Texture ? Box->Texture.Index : Renderer->WhiteTexture.Index;
+	
+		ui_draw_data DrawData = {
+			.TextureIndex = (s32)TextureIndex,
+			.SamplerIndex = (s32)Renderer->DefaultSampler.Index
+		};
+
+		Render_Set_Push_Constants(RenderPass, &DrawData, sizeof(ui_draw_data));
+
+		v4 BackgroundColor = Box->BackgroundColor;
+		if (Box->CurrentState & UI_BOX_STATE_HOVERING) {
+			v3 HSV = RGB_To_HSV(BackgroundColor.xyz);
+			HSV.y *= 0.5f;
+			BackgroundColor.xyz = HSV_To_RGB(HSV);
+		}
+
+		BackgroundColor.xyz = V3_Mul_S(BackgroundColor.xyz, BackgroundColor.w);
+
+		IM_Push_Rect2D_Color_UV_Norm(Box->Rect.p0, Box->Rect.p1, BackgroundColor);
+		IM_Flush(RenderPass);
+	}
 
 	if (Box->Flags & UI_BOX_FLAG_DRAW_TEXT) {
 		string DisplayString = Box->DisplayString;
@@ -668,6 +702,50 @@ function b32 Hot_Reload_Shaders() {
 		}
 	}
 
+	//Linearize Depth
+	{
+		shader* VtxShader = Get_Shader(String_Lit("linearize_depth_vtx"));
+		shader* PxlShader = Get_Shader(String_Lit("linearize_depth_pxl"));
+		if (VtxShader->Reload && PxlShader->Reload) {
+			if (!GDI_Is_Null(ShaderManager->LinearizeDepthShader)) {
+				GDI_Delete_Shader(ShaderManager->LinearizeDepthShader);
+			}
+
+			gdi_vtx_attribute Attributes[] = {
+				{ .Semantic = String_Lit("POSITION"), .Format = GDI_FORMAT_R32G32_FLOAT },
+				{ .Semantic = String_Lit("TEXCOORD"), .Format = GDI_FORMAT_R32G32_FLOAT },
+				{ .Semantic = String_Lit("COLOR"), .Format = GDI_FORMAT_R32G32B32A32_FLOAT }
+			};
+
+			gdi_vtx_binding VtxBindings[] = {
+				{ .Stride = sizeof(im_vtx_v2_uv2_c), .Attributes = { .Ptr = Attributes, .Count = Array_Count(Attributes) } }
+			};
+
+			gdi_blend_state BlendStates[] = {
+				{ .SrcFactor = GDI_BLEND_ONE, .DstFactor = GDI_BLEND_INV_SRC_ALPHA }
+			};
+
+			gdi_handle BindGroupLayouts[] = {
+				Renderer->ShaderManager.SingleShaderDataBindGroupLayout,
+				Renderer->TextureManager.BindlessTextureBindGroupLayout
+			};
+
+			gdi_shader_create_info ShaderCreateInfo = {
+				.VS = VtxShader->Code,
+				.PS = PxlShader->Code,
+				.BindGroupLayouts = { .Ptr = BindGroupLayouts, .Count = Array_Count(BindGroupLayouts) },
+				.PushConstantCount = sizeof(linearize_depth_draw_data) / sizeof(u32),
+				.VtxBindings = { .Ptr = VtxBindings, .Count = Array_Count(VtxBindings) },
+				.RenderTargetFormats = { GDI_Get_View_Format() },
+				.BlendStates = { .Ptr = BlendStates, .Count = Array_Count(BlendStates) },
+				.DebugName = String_Lit("Linearize Depth Shader")
+			};
+
+			ShaderManager->LinearizeDepthShader = GDI_Create_Shader(&ShaderCreateInfo);
+			if (GDI_Is_Null(ShaderManager->LinearizeDepthShader)) return false;
+		}
+	}
+
 	//Reset all the reload flags for all shaders after we have reloaded them
 	for (u32 i = 0; i < MAX_SHADER_SLOT_COUNT; i++) {
 		shader_slot* Slot = ShaderManager->ShaderSlots + i;
@@ -807,34 +885,22 @@ function b32 Render_Frame(renderer* Renderer, camera* CameraView) {
 
 	v2 ViewDim = V2_From_V2i(GDI_Get_View_Dim());
 	if (ViewDim.x != Renderer->LastDim.x || ViewDim.y != Renderer->LastDim.y) {
-		if (!GDI_Is_Null(Renderer->DepthBuffer)) {
-			GDI_Delete_Texture_View(Renderer->DepthView);
-			GDI_Delete_Texture(Renderer->DepthBuffer);
+		if (!Slot_Is_Null(Renderer->DepthBuffer)) {
+			Delete_GFX_Texture(Renderer->DepthBuffer);
 		}
 
-		gdi_texture_create_info DepthBufferInfo = {
-			.Format = GDI_FORMAT_D32_FLOAT,
+		Renderer->DepthBuffer = Create_GFX_Texture({
 			.Dim = GDI_Get_View_Dim(),
-			.Usage = GDI_TEXTURE_USAGE_DEPTH,
-			.MipCount = 1,
+			.Format = GDI_FORMAT_D32_FLOAT,
+			.Usage = GDI_TEXTURE_USAGE_DEPTH|GDI_TEXTURE_USAGE_SAMPLED,
 			.DebugName = String_Lit("Depth Buffer")
-		};
-
-		Renderer->DepthBuffer = GDI_Create_Texture(&DepthBufferInfo);
-		if (GDI_Is_Null(Renderer->DepthBuffer)) return false;
-
-		gdi_texture_view_create_info DepthViewInfo = {
-			.Texture = Renderer->DepthBuffer,
-			.DebugName = String_Lit("Depth Buffer View")
-		};
-		Renderer->DepthView = GDI_Create_Texture_View(&DepthViewInfo);
-		if (GDI_Is_Null(Renderer->DepthView)) return false;
+		});
 
 		Renderer->LastDim = ViewDim;
 	}
 
 	m4_affine WorldToView = Camera_Get_View(CameraView);
-	m4 ViewToClip = M4_Perspective(To_Radians(60.0f), ViewDim.x / ViewDim.y, 0.1f, 10000.0f);
+	m4 ViewToClip = M4_Perspective(CameraView->FieldOfView, ViewDim.x / ViewDim.y, CameraView->ZNear, CameraView->ZFar);
 	m4 WorldToClip = M4_Affine_Mul_M4(&WorldToView, &ViewToClip);
 
 	render_context RenderContext = {
@@ -847,9 +913,10 @@ function b32 Render_Frame(renderer* Renderer, camera* CameraView) {
 	Update_Entity_Data(&RenderContext);
 
 	{
+		gfx_texture* DepthBuffer = Get_GFX_Texture(Renderer->DepthBuffer);
 		gdi_render_pass_begin_info RenderPassInfo = {
 			.RenderTargetViews = { GDI_Get_View() },
-			.DepthBufferView = Renderer->DepthView,
+			.DepthBufferView = DepthBuffer->View,
 			.ClearColors = { {
 				.ShouldClear = true,
 				.F32 = { 0, 0, 0, 1 },

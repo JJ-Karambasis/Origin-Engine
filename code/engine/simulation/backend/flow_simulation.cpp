@@ -132,5 +132,9 @@ function void Simulation_Init_Backend(simulation* Simulation) {
 	Backend->System = Flow_System_Create(&FlowCreateInfo);
 }
 
+function void Simulation_Reload(simulation* Simulation) {
+	//Noop
+}
+
 #define FLOW_IMPLEMENTATION
 #include <flow.h>

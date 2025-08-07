@@ -343,8 +343,54 @@ global simulation_backend_vtable VTable = {
 	.SetGravityFunc = Jolt_Backend_Set_Gravity
 };
 
+function void* Jolt_Backend_Allocate_Memory(size_t Size) {
+	void* Ptr = Allocator_Allocate_Memory(Default_Allocator_Get(), Size);
+	return Ptr;
+}
+
+function void* Jolt_Backend_Reallocate_Memory(void* Block, size_t OldSize, size_t NewSize) {
+	if (OldSize == NewSize) return Block;
+
+	void* Ptr = Allocator_Allocate_Memory(Default_Allocator_Get(), NewSize);
+	if (Ptr) {
+		Memory_Copy(Ptr, Block, Min(OldSize, NewSize));
+		Allocator_Free_Memory(Default_Allocator_Get(), Block);
+	}
+
+	return Ptr;
+}
+
+function void Jolt_Backend_Free_Memory(void* Block) {
+	Allocator_Free_Memory(Default_Allocator_Get(), Block);
+}
+
+function void* Jolt_Backend_Allocate_Aligned_Memory(size_t Size, size_t Alignment) {
+	Assert(Alignment > 0 && Is_Pow2(Alignment));
+
+	size_t Offset = Alignment - 1 + sizeof(void*);
+	void* P1 = Allocator_Allocate_Memory(Default_Allocator_Get(), Size + Offset);
+	if (!P1) return NULL;
+
+    void** P2 = (void**)(((size_t)(P1) + Offset) & ~(Alignment - 1));
+    P2[-1] = P1;
+        
+    return P2;
+}
+
+function void Jolt_Backend_Free_Aligned_Memory(void* Memory) {
+	if (Memory) {
+		void* OriginalUnaligned = ((void* *)Memory)[-1];
+		Allocator_Free_Memory(Default_Allocator_Get(), OriginalUnaligned);
+	}
+}
+
 function void Simulation_Init_Backend(simulation* Simulation) {
-    JPH::RegisterDefaultAllocator();
+	JPH::Allocate = Jolt_Backend_Allocate_Memory;
+	JPH::Reallocate = Jolt_Backend_Reallocate_Memory;
+	JPH::Free = Jolt_Backend_Free_Memory;
+	JPH::AlignedAllocate = Jolt_Backend_Allocate_Aligned_Memory;
+	JPH::AlignedFree = Jolt_Backend_Free_Aligned_Memory;
+
 
 	JPH::Trace = [](const char* inFMT, ...) {
 		arena* Scratch = Scratch_Get();
@@ -375,7 +421,17 @@ function void Simulation_Init_Backend(simulation* Simulation) {
 	Settings.mNumVelocitySteps = SIMULATION_VELOCITY_ITERATIONS;
 	Settings.mNumPositionSteps = SIMULATION_POSITION_ITERATIONS;
 	Backend->System.SetPhysicsSettings(Settings);
+}
 
+function void Simulation_Reload(simulation* Simulation) {
+	JPH::Allocate = Jolt_Backend_Allocate_Memory;
+	JPH::Reallocate = Jolt_Backend_Reallocate_Memory;
+	JPH::Free = Jolt_Backend_Free_Memory;
+	JPH::AlignedAllocate = Jolt_Backend_Allocate_Aligned_Memory;
+	JPH::AlignedFree = Jolt_Backend_Free_Aligned_Memory;
+
+	JPH::Factory::sInstance = new JPH::Factory();
+    JPH::RegisterTypes();
 }
 
 #pragma comment(lib, "Jolt.lib")

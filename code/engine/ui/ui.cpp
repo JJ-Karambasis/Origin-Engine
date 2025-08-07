@@ -47,6 +47,11 @@ function void UI_Set_Position(ui_box* Box, v2 P) {
 	Box->FixedP = P;
 }
 
+function void UI_Set_Draw_Callback(ui_box* Box, ui_custom_draw_callback_func* Func, void* UserData) {
+	Box->CustomDrawCallback = Func;
+	Box->CustomDrawCallbackUserData = UserData;
+}
+
 function void UI_Set_Next_Fixed_Size(v2 Size) {
 	UI_Set_Next_Fixed_Width(Size.x);
 	UI_Set_Next_Fixed_Height(Size.y);
@@ -98,6 +103,10 @@ function ui_box* UI_Make_Box(ui_box_flags Flags, ui_box_id ID) {
 
 	if (UI_Has_Font()) {
 		Box->Font = UI_Get_Font();
+	}
+
+	if (UI_Has_Texture()) {
+		Box->Texture = UI_Get_Texture();
 	}
 
 	Box->TextColor = V4_All(1.0f);

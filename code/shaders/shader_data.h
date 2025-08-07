@@ -39,4 +39,11 @@ struct ui_shader_data {
 	v2 InvResolution;
 };
 
+struct linearize_depth_draw_data {
+	s32 TextureIndex;
+	s32 SamplerIndex;
+	f32 ZNear;
+	f32 ZFar;
+};
+
 #endif

@@ -7,6 +7,9 @@ typedef struct {
 	f32 Roll;
 	f32 Distance;
 	v3  Target;
+	f32 FieldOfView;
+	f32 ZNear;
+	f32 ZFar;
 } camera;
 
 #endif
