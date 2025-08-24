@@ -135,7 +135,9 @@ function ENGINE_FUNCTION_DEFINE(Engine_Update_Impl) {
 	camera* Camera = &Engine->Camera;
 	Camera_Move_Arcball(Camera, dt);
 
-	UI_Begin(V2_From_V2i(GDI_Get_View_Dim()));
+	gdi_swapchain_info ViewInfo = Get_View_Info();
+
+	UI_Begin(V2_From_V2i(ViewInfo.Dim));
 
 	ui_font DefaultFont = { Engine->Font, 30 * UI_Scale() };
 	UI_Push_Font(DefaultFont);
@@ -143,7 +145,7 @@ function ENGINE_FUNCTION_DEFINE(Engine_Update_Impl) {
 	UI_Set_Next_Fixed_Size(V2(500, 300));
 	UI_Set_Next_Layout_Axis(UI_AXIS_Y);
 	ui_box* Box = UI_Make_Box_From_String(0, String_Lit("Info Box"));
-	v2 P = V2(GDI_Get_View_Dim().x - Box->FixedDim.x, 0.0f);
+	v2 P = V2(ViewInfo.Dim.x - Box->FixedDim.x, 0.0f);
 	UI_Set_Position(Box, P);
 
 	UI_Push_Parent(Box);
@@ -159,19 +161,9 @@ function ENGINE_FUNCTION_DEFINE(Engine_Update_Impl) {
 	}
 
 	UI_Pop_Parent();
-
 	UI_Pop_Font();
 
-	UI_Set_Next_Fixed_Size(V2_Mul_S(Renderer_Get()->LastDim, 0.5f));
-	UI_Set_Next_Texture(Renderer_Get()->DepthBuffer);
-	UI_Set_Next_Background_Color(V4_All(1.0f));
-	UI_Make_Box_From_String(0, String_Lit("Depth Buffer"));
-
-	draw_linear_depth_data* DrawLinearDepth = Arena_Push_Struct(UI_Build_Arena(), draw_linear_depth_data);
-	DrawLinearDepth->ZNear = Camera->ZNear;
-	DrawLinearDepth->ZFar = Camera->ZFar;
-
-	UI_Set_Draw_Callback(UI_Get_Last_Box(), Draw_Linear_Depth, DrawLinearDepth);
+	UI_Texture(1024, 1024, Engine->Renderer.ShadowMap);
 
 	UI_End();
 
@@ -219,6 +211,12 @@ function ENGINE_FUNCTION_DEFINE(Engine_Update_Impl) {
 		}
 	}
 #endif
+
+	dir_light* DirLight = &Engine->Renderer.DirLight;
+	DirLight->Orientation = Quat_RotX(To_Radians(-45.0f));
+	DirLight->Intensity = 1.0f;
+	DirLight->Color = V3(1.0f, 1.0f, 1.0f);
+	DirLight->IsOn = true;
 
 	Render_Frame(&Engine->Renderer, Camera);
 	return true;
@@ -395,4 +393,5 @@ export_function ENGINE_FUNCTION_DEFINE(Engine_Reload) {
 
 #ifdef OS_WIN32
 #pragma comment(lib, "base.lib")
+#pragma comment(lib, "user32.lib")
 #endif

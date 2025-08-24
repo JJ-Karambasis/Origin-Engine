@@ -5,9 +5,17 @@ function renderer* Renderer_Get() {
 	return &Get_Engine()->Renderer;
 }
 
-function void Draw_Mesh(gdi_render_pass* RenderPass, gfx_mesh* Mesh) {
+function inline gdi_handle Get_View() {
+	return GDI_Get_Swapchain_View(Renderer_Get()->Swapchain);
+}
+
+function inline gdi_swapchain_info Get_View_Info() {
+	return GDI_Get_Swapchain_Info(Renderer_Get()->Swapchain);
+}
+
+function void Draw_Mesh(gdi_render_pass* RenderPass, gfx_mesh* Mesh, b32 OnlyPosition = false) {
 	Render_Set_Vtx_Buffer(RenderPass, 0, Mesh->VtxBuffers[0]);
-	if (!GDI_Is_Null(Mesh->VtxBuffers[1])) {
+	if (!OnlyPosition && !GDI_Is_Null(Mesh->VtxBuffers[1])) {
 		Render_Set_Vtx_Buffer(RenderPass, 1, Mesh->VtxBuffers[1]);
 	}
 
@@ -540,6 +548,7 @@ function shader* Get_Shader(string ShaderName) {
 function b32 Hot_Reload_Shaders() {
 	renderer* Renderer = Renderer_Get();
 	shader_manager* ShaderManager = &Renderer->ShaderManager;
+	gdi_swapchain_info ViewInfo = Get_View_Info();
 
 	//First check every shader and set their reload flags if the hot reloader
 	//detects it. This way we can manually set the reload flag for whatever reason
@@ -580,7 +589,7 @@ function b32 Hot_Reload_Shaders() {
 				.PS = PxlShader->Code,
 				.PushConstantCount = sizeof(basic_shader_data)/sizeof(u32),
 				.VtxBindings = { .Ptr = VtxBindings, .Count = Array_Count(VtxBindings) },
-				.RenderTargetFormats = { GDI_Get_View_Format() },
+				.RenderTargetFormats = { ViewInfo.Format },
 				.DepthState = {
 					.TestEnabled = true,
 					.WriteEnabled = true,
@@ -642,7 +651,7 @@ function b32 Hot_Reload_Shaders() {
 				.BindGroupLayouts = { .Ptr = BindGroupLayouts, .Count = Array_Count(BindGroupLayouts) },
 				.PushConstantCount = sizeof(entity_draw_data)/sizeof(u32),
 				.VtxBindings = { .Ptr = VtxBindings, .Count = Array_Count(VtxBindings) },
-				.RenderTargetFormats = { GDI_Get_View_Format() },
+				.RenderTargetFormats = { ViewInfo.Format },
 				.DepthState = {
 					.TestEnabled = true,
 					.WriteEnabled = true,
@@ -654,6 +663,48 @@ function b32 Hot_Reload_Shaders() {
 
 			ShaderManager->EntityShader = GDI_Create_Shader(&ShaderCreateInfo);
 			if (GDI_Is_Null(ShaderManager->EntityShader)) return false;
+		}
+	}
+
+	//Shadow
+	{
+		shader* VtxShader = Get_Shader(String_Lit("shadow_vtx"));
+		shader* PxlShader = Get_Shader(String_Lit("shadow_pxl"));
+		if (VtxShader->Reload || PxlShader->Reload) {
+			if (!GDI_Is_Null(ShaderManager->ShadowShader)) {
+				GDI_Delete_Shader(ShaderManager->ShadowShader);
+			}
+
+			gdi_vtx_attribute PositionAttrib[] = {
+				{ .Semantic = String_Lit("POSITION"), .Format = GDI_FORMAT_R32G32B32_FLOAT }
+			};
+
+			gdi_vtx_binding VtxBindings[] = {
+				{ .Stride = sizeof(v3), .Attributes = { .Ptr = PositionAttrib, .Count = Array_Count(PositionAttrib) } },
+			};
+
+			gdi_handle BindGroupLayouts[] = {
+				Renderer->ShaderManager.SingleShaderDataBindGroupLayout,
+				Renderer->ShaderManager.EntityData.BindGroupLayout
+			};
+
+			gdi_shader_create_info ShaderCreateInfo = {
+				.VS = VtxShader->Code,
+				.PS = PxlShader->Code,
+				.BindGroupLayouts = { .Ptr = BindGroupLayouts, .Count = Array_Count(BindGroupLayouts) },
+				.PushConstantCount = sizeof(entity_draw_data)/sizeof(u32),
+				.VtxBindings = { .Ptr = VtxBindings, .Count = Array_Count(VtxBindings) },
+				.DepthState = {
+					.TestEnabled = true,
+					.WriteEnabled = true,
+					.CompareFunc = GDI_COMPARE_FUNC_LEQUAL,
+					.DepthFormat = GDI_FORMAT_D32_FLOAT
+				},
+				.DebugName = String_Lit("Shadow Shader")
+			};
+
+			ShaderManager->ShadowShader = GDI_Create_Shader(&ShaderCreateInfo);
+			if (GDI_Is_Null(ShaderManager->ShadowShader)) return false;
 		}
 	}
 
@@ -692,7 +743,7 @@ function b32 Hot_Reload_Shaders() {
 				.BindGroupLayouts = { .Ptr = BindGroupLayouts, .Count = Array_Count(BindGroupLayouts) },
 				.PushConstantCount = sizeof(ui_draw_data) / sizeof(u32),
 				.VtxBindings = { .Ptr = VtxBindings, .Count = Array_Count(VtxBindings) },
-				.RenderTargetFormats = { GDI_Get_View_Format() },
+				.RenderTargetFormats = { ViewInfo.Format },
 				.BlendStates = { .Ptr = BlendStates, .Count = Array_Count(BlendStates) },
 				.DebugName = String_Lit("UI Shader")
 			};
@@ -736,7 +787,7 @@ function b32 Hot_Reload_Shaders() {
 				.BindGroupLayouts = { .Ptr = BindGroupLayouts, .Count = Array_Count(BindGroupLayouts) },
 				.PushConstantCount = sizeof(linearize_depth_draw_data) / sizeof(u32),
 				.VtxBindings = { .Ptr = VtxBindings, .Count = Array_Count(VtxBindings) },
-				.RenderTargetFormats = { GDI_Get_View_Format() },
+				.RenderTargetFormats = { ViewInfo.Format },
 				.BlendStates = { .Ptr = BlendStates, .Count = Array_Count(BlendStates) },
 				.DebugName = String_Lit("Linearize Depth Shader")
 			};
@@ -789,6 +840,8 @@ function b32 Renderer_Init(renderer* Renderer) {
 		if (GDI_Is_Null(TextureManager->BindlessTextureBindGroup)) return false;
 	}
 
+	
+	//Default sampler
 	{
 		Renderer->DefaultSampler = Create_GFX_Sampler({
 			.Filter = GDI_FILTER_LINEAR,
@@ -799,6 +852,7 @@ function b32 Renderer_Init(renderer* Renderer) {
 		if (Slot_Is_Null(Renderer->DefaultSampler)) return false;
 	}
 
+	//Default white texture
 	{
 		u32 TexelData[] = { 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF };
 		buffer Texels = Make_Buffer(TexelData, sizeof(TexelData));
@@ -808,8 +862,28 @@ function b32 Renderer_Init(renderer* Renderer) {
 			.Texels = &Texels,
 			.DebugName = String_Lit("Default White Texture")
 		});
+		if (Slot_Is_Null(Renderer->WhiteTexture)) return false;
 	}
 
+	//Shadow map
+	{
+		Renderer->ShadowMap = Create_GFX_Texture( {
+			.Dim = V2i(1024, 1024),
+			.Format = GDI_FORMAT_D32_FLOAT,
+			.Usage = GDI_TEXTURE_USAGE_DEPTH|GDI_TEXTURE_USAGE_SAMPLED,
+			.DebugName = String_Lit("Shadow Map")
+		});
+		if (Slot_Is_Null(Renderer->ShadowMap)) return false;
+
+		Renderer->ShadowSampler = Create_GFX_Sampler({
+			.Filter = GDI_FILTER_LINEAR,
+			.AddressModeU = GDI_ADDRESS_MODE_BORDER,
+			.AddressModeV = GDI_ADDRESS_MODE_BORDER
+		});
+		if (Slot_Is_Null(Renderer->ShadowSampler)) return false;
+	}
+
+	//Shader Data
 	{
 		shader_manager* ShaderManager = &Renderer->ShaderManager;
 		
@@ -825,6 +899,7 @@ function b32 Renderer_Init(renderer* Renderer) {
 
 		ShaderManager->EntityShaderData = Create_Shader_Data(shader_sizeof(entity_shader_data), 1, String_Lit("Entity Shader Data"));
 		ShaderManager->EntityData = Create_Shader_Data(shader_sizeof(entity_data), MAX_ENTITY_DATA, String_Lit("Entity Data"));
+		ShaderManager->ShadowShaderData = Create_Shader_Data(shader_sizeof(shadow_shader_data), 1, String_Lit("Shadow Shader Data"));
 		ShaderManager->UIShaderData = Create_Shader_Data(shader_sizeof(ui_shader_data), 1, String_Lit("UI Shader Data"));
 	}
 
@@ -845,6 +920,14 @@ function void Update_Entity_Data(render_context* Context) {
 
 	entity_shader_data* ShaderData = (entity_shader_data*)GDI_Map_Buffer(ShaderManager->EntityShaderData.Buffer);
 	ShaderData->WorldToClip = M4_Transpose(&Context->WorldToClip);
+	ShaderData->DirLight = {
+		.Dir = V4_From_V3(Quat_Rotate(DEFAULT_LIGHT_DIR, Context->DirLight.Orientation), 0.0f),
+		.Color = V4_From_V3(V3_Mul_S(Context->DirLight.Color, Context->DirLight.Intensity), 1.0f),
+		.WorldToClipLight = M4_Transpose(&Context->WorldToClipLight)
+	};
+	ShaderData->ShadowMapIndex = Renderer->ShadowMap.Index;
+	ShaderData->ShadowSamplerIndex = Renderer->ShadowSampler.Index;
+
 	GDI_Unmap_Buffer(ShaderManager->EntityShaderData.Buffer);
 
 	entity_data* EntityData = (entity_data*)GDI_Map_Buffer(ShaderManager->EntityData.Buffer);
@@ -883,14 +966,16 @@ function b32 Render_Frame(renderer* Renderer, camera* CameraView) {
 
 	shader_manager* ShaderManager = &Renderer->ShaderManager;
 
-	v2 ViewDim = V2_From_V2i(GDI_Get_View_Dim());
+	gdi_swapchain_info ViewInfo = Get_View_Info();
+
+	v2 ViewDim = V2_From_V2i(ViewInfo.Dim);
 	if (ViewDim.x != Renderer->LastDim.x || ViewDim.y != Renderer->LastDim.y) {
 		if (!Slot_Is_Null(Renderer->DepthBuffer)) {
 			Delete_GFX_Texture(Renderer->DepthBuffer);
 		}
 
 		Renderer->DepthBuffer = Create_GFX_Texture({
-			.Dim = GDI_Get_View_Dim(),
+			.Dim = ViewInfo.Dim,
 			.Format = GDI_FORMAT_D32_FLOAT,
 			.Usage = GDI_TEXTURE_USAGE_DEPTH|GDI_TEXTURE_USAGE_SAMPLED,
 			.DebugName = String_Lit("Depth Buffer")
@@ -910,12 +995,72 @@ function b32 Render_Frame(renderer* Renderer, camera* CameraView) {
 		.WorldToClip = WorldToClip
 	};
 
+	dir_light* DirLight = &Renderer->DirLight;
+	if (DirLight->IsOn) {
+		RenderContext.DirLight = *DirLight;
+
+		//World to clip calculate on the directional light for shadows
+		f32 LightDistance = 20.0f;
+		f32 BoxSize = 50.0f;
+
+		v3 LightDirection = Quat_Rotate(DEFAULT_LIGHT_DIR, DirLight->Orientation);
+		v3 LightPosition = V3_Mul_S(LightDirection, -LightDistance);
+
+		m4_affine View = M4_Affine_Inverse_Transform_Quat_No_Scale(LightPosition, DirLight->Orientation);
+		m4 Projection = M4_Orthographic(-BoxSize, BoxSize, -BoxSize, BoxSize, -BoxSize, BoxSize);
+
+		RenderContext.WorldToClipLight = M4_Affine_Mul_M4(&View, &Projection);
+
+		shadow_shader_data* ShaderData = (shadow_shader_data*)GDI_Map_Buffer(ShaderManager->ShadowShaderData.Buffer);
+		ShaderData->WorldToClip = M4_Transpose(&RenderContext.WorldToClipLight);
+		GDI_Unmap_Buffer(ShaderManager->ShadowShaderData.Buffer);
+	}
+
 	Update_Entity_Data(&RenderContext);
 
+	//Shadow pass
+	{
+		gfx_texture* ShadowMap = Get_GFX_Texture(Renderer->ShadowMap);
+		gdi_render_pass_begin_info RenderPassInfo = {
+			.DepthBufferView = ShadowMap->View,
+			.ClearDepth = {
+				.ShouldClear = true,
+				.Depth = 1.0f
+			}
+		};
+
+		gdi_render_pass* RenderPass = GDI_Begin_Render_Pass(&RenderPassInfo);
+		Render_Set_Shader(RenderPass, ShaderManager->ShadowShader);
+
+		gdi_handle BindGroups[] = {
+			ShaderManager->ShadowShaderData.BindGroup,
+			ShaderManager->EntityData.BindGroup
+		};
+		Render_Set_Bind_Groups(RenderPass, 0, BindGroups, Array_Count(BindGroups));
+
+		s32 EntityIndex = 0;
+		for (pool_iter Iter = Pool_Begin_Iter(&Renderer->GfxComponents); Iter.IsValid; Pool_Iter_Next(&Iter)) {
+			gfx_component* Component = (gfx_component*)Iter.Data;
+			gfx_mesh* Mesh = Get_GFX_Mesh(Component->Mesh);
+			if (Mesh) {
+				entity_draw_data DrawData = {
+					.EntityIndex = EntityIndex
+				};
+				Render_Set_Push_Constants(RenderPass, &DrawData, sizeof(entity_draw_data));
+				Draw_Mesh(RenderPass, Mesh, true);
+				EntityIndex++;
+			}
+		}
+
+		GDI_End_Render_Pass(RenderPass);
+		GDI_Submit_Render_Pass(RenderPass);
+	}
+
+	//Entity pass
 	{
 		gfx_texture* DepthBuffer = Get_GFX_Texture(Renderer->DepthBuffer);
 		gdi_render_pass_begin_info RenderPassInfo = {
-			.RenderTargetViews = { GDI_Get_View() },
+			.RenderTargetViews = { Get_View() },
 			.DepthBufferView = DepthBuffer->View,
 			.ClearColors = { {
 				.ShouldClear = true,
@@ -958,7 +1103,7 @@ function b32 Render_Frame(renderer* Renderer, camera* CameraView) {
 	if (!Render_Draw_Primitives(&RenderContext)) return false;
 
 	{
-		gdi_render_pass_begin_info RenderPassInfo = { .RenderTargetViews = { GDI_Get_View() } };
+		gdi_render_pass_begin_info RenderPassInfo = { .RenderTargetViews = { Get_View() } };
 		gdi_render_pass* RenderPass = GDI_Begin_Render_Pass(&RenderPassInfo);
 
 		ui_shader_data* ShaderData = (ui_shader_data*)GDI_Map_Buffer(ShaderManager->UIShaderData.Buffer);
@@ -977,7 +1122,9 @@ function b32 Render_Frame(renderer* Renderer, camera* CameraView) {
 		GDI_Submit_Render_Pass(RenderPass);
 	}
 
-	gdi_render_params RenderParams = {};
+	gdi_render_params RenderParams = {
+		.Swapchains = { .Ptr = &Renderer->Swapchain, .Count = 1 }
+	};
 	GDI_Render(&RenderParams);
 	
 	return true;

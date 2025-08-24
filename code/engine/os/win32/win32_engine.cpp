@@ -561,13 +561,24 @@ int main() {
 									  		 NULL, NULL, Instance, NULL);
 	ShowWindow(Win32Engine.MainWindow, SW_MAXIMIZE);
 
-	gdi* GDI = GDI_Init(Base_Get(), Win32Engine.MainWindow, Instance);
+	gdi* GDI = GDI_Init(Base_Get());
 	if (!GDI) {
 		MessageBoxW(NULL, L"Failed to initialize gdi", L"Error", MB_OK);
 		return 1;
 	}
 
+
 	Win32Engine.Renderer.GDI = GDI;
+	
+	gdi_swapchain_create_info SwapchainInfo = {
+		.Window = Win32Engine.MainWindow,
+		.Instance = Instance,
+		.Format = GDI_FORMAT_B8G8R8A8_SRGB,
+		.DebugName = String_Lit("Main Window Swapchain")
+	};
+	Win32Engine.Renderer.Swapchain = GDI_Create_Swapchain(&SwapchainInfo);
+
+
 	UINT DPI = GetDpiForWindow(Win32Engine.MainWindow);
 
 	Win32Engine.UIScale = (f32)DPI / 96.0f;

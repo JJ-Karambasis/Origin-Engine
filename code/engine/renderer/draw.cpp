@@ -168,14 +168,16 @@ function b32 Render_Draw_Primitives(render_context* RenderContext) {
 	draw_primitives* DrawPrimitives = Get_Draw_Primitives();
 	shader_manager* ShaderManager = &Renderer_Get()->ShaderManager;
 
-	v2 ViewDim = V2_From_V2i(GDI_Get_View_Dim());
+	gdi_swapchain_info ViewInfo = Get_View_Info();
+
+	v2 ViewDim = V2_From_V2i(ViewInfo.Dim);
 	if (ViewDim.x != DrawPrimitives->LastDim.x || ViewDim.y != DrawPrimitives->LastDim.y) {
 		if (!Slot_Is_Null(DrawPrimitives->DepthBuffer)) {
 			Delete_GFX_Texture(DrawPrimitives->DepthBuffer);
 		}
 
 		DrawPrimitives->DepthBuffer = Create_GFX_Texture({
-			.Dim = GDI_Get_View_Dim(),
+			.Dim = ViewInfo.Dim,
 			.Format = GDI_FORMAT_D32_FLOAT,
 			.Usage = GDI_TEXTURE_USAGE_DEPTH|GDI_TEXTURE_USAGE_SAMPLED,
 			.DebugName = String_Lit("Draw Primitives Depth Buffer")
@@ -186,7 +188,7 @@ function b32 Render_Draw_Primitives(render_context* RenderContext) {
 
 	gfx_texture* DepthBuffer = Get_GFX_Texture(DrawPrimitives->DepthBuffer);
 	gdi_render_pass_begin_info RenderPassInfo = {
-		.RenderTargetViews = { GDI_Get_View() },
+		.RenderTargetViews = { Get_View() },
 		.DepthBufferView = { DepthBuffer->View },
 		.ClearDepth = {
 			.ShouldClear = true,

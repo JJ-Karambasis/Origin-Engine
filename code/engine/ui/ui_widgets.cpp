@@ -16,3 +16,11 @@ function void UI_Text_Formatted(ui_box_flags Flags, const char* Format, ...) {
 
 	Scratch_Release();
 }
+
+function void UI_Texture(u32 Width, u32 Height, gfx_texture_id ID) {
+	UI_Set_Next_Fixed_Width(Width);
+	UI_Set_Next_Fixed_Height(Height);
+	UI_Set_Next_Texture(ID);
+	UI_Set_Next_Background_Color(V4_All(1.0f));
+	UI_Make_Box_From_String_Format(0, "%" PRIu64, ID.ID);
+}

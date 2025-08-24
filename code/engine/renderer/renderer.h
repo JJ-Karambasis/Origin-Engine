@@ -145,6 +145,10 @@ struct shader_manager {
 	shader_data EntityData;
 	gdi_handle EntityShader;
 
+	//Shadow
+	shader_data ShadowShaderData;
+	gdi_handle ShadowShader;
+
 	//UI
 	gdi_handle UIShader;
 	shader_data UIShaderData;
@@ -153,11 +157,22 @@ struct shader_manager {
 	gdi_handle LinearizeDepthShader;
 };
 
+#define DEFAULT_LIGHT_DIR V3(0.0f, 0.0f, -1.0f)
+struct dir_light {
+	quat Orientation;
+	f32  Intensity;
+	v3   Color;
+	b32  IsOn;
+};
+
 struct render_context {
 	v2 		  ViewDim;
 	m4_affine WorldToView;
 	m4 		  ViewToClip;
 	m4 		  WorldToClip;
+
+	dir_light DirLight;
+	m4 WorldToClipLight;
 };
 
 #include "draw.h"
@@ -169,13 +184,20 @@ struct renderer {
 	pool GfxMeshes;
 	texture_manager TextureManager;
 	shader_manager ShaderManager;
+
+	gdi_handle Swapchain;
 	
 	gfx_texture_id DepthBuffer;
+
+	gfx_sampler_id ShadowSampler;
+	gfx_texture_id ShadowMap;
 
 	gfx_sampler_id DefaultSampler;
 	gfx_texture_id WhiteTexture;
 
 	draw_primitives DrawPrimitives;
+
+	dir_light DirLight;
 
 	v2 LastDim;
 };

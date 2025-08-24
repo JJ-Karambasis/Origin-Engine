@@ -37,6 +37,9 @@ pushd %data_path%\shaders
 	%dxc_path% %hlsl_vtx_flags% %shader_path%\entity.hlsl -Fo entity_vtx.shader
 	%dxc_path% %hlsl_pxl_flags% %shader_path%\entity.hlsl -Fo entity_pxl.shader
 
+	%dxc_path% %hlsl_vtx_flags% %shader_path%\shadow.hlsl -Fo shadow_vtx.shader
+	%dxc_path% %hlsl_pxl_flags% %shader_path%\shadow.hlsl -Fo shadow_pxl.shader
+
 	%dxc_path% %hlsl_vtx_flags% %shader_path%\ui.hlsl -Fo ui_vtx.shader
 	%dxc_path% %hlsl_pxl_flags% %shader_path%\ui.hlsl -Fo ui_pxl.shader
 
@@ -87,7 +90,7 @@ echo %app_defines%
 
 set msvc_optimized_flag=/Od /MTd
 if %build_debug% == 0 (
-	set msvc_optimized_flag=/O2 /MTd
+	set msvc_optimized_flag=/O2
 )
 
 set msvc_dll=-LD
@@ -114,7 +117,7 @@ if %build_clang% == 0 (
 
 set engine_link_flags=%compile_link%
 if %use_jolt% == 1 (
-	set engine_link_flags=%engine_link_flags% %compiler_link_codegen%
+	set engine_link_flags=%engine_link_flags%
 )
 
 pushd %bin_path%

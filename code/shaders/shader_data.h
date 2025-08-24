@@ -10,8 +10,17 @@ struct basic_shader_data {
 	v4 C;
 };
 
+struct shader_dir_light {
+	v4 Dir; //xyz stores direction
+	v4 Color; //xyz stores color
+	m4 WorldToClipLight;
+};
+
 struct entity_shader_data {
-	m4 WorldToClip;
+	m4 				 WorldToClip;
+	shader_dir_light DirLight;
+	s32 			 ShadowMapIndex;
+	s32 			 ShadowSamplerIndex;
 };
 
 struct entity_data {
@@ -28,6 +37,10 @@ struct entity_data {
 
 struct entity_draw_data {
 	s32 EntityIndex;
+};
+
+struct shadow_shader_data {
+	m4 WorldToClip;
 };
 
 struct ui_draw_data {
