@@ -1,13 +1,10 @@
-function ui* UI_Get() {
-	engine_thread_context* ThreadContext = Get_Engine_Thread_Context();
-	if (!ThreadContext->UI) {
-		arena* Arena = Arena_Create();
-		ThreadContext->UI = Arena_Push_Struct(Arena, ui);
-		ThreadContext->UI->Arena = Arena;
-		ThreadContext->UI->BuildArenas[0] = Arena_Create(); 
-		ThreadContext->UI->BuildArenas[1] = Arena_Create();
-	}
-	return ThreadContext->UI;
+function ui* UI_Create() {
+	arena* Arena = Arena_Create();
+	ui* UI = Arena_Push_Struct(Arena, ui);
+	UI->Arena = Arena;
+	UI->BuildArenas[0] = Arena_Create(); 
+	UI->BuildArenas[1] = Arena_Create();
+	return UI;
 }
 
 function ui* UI_Has_Begun() {
@@ -347,17 +344,21 @@ function void UI_Calc_State(ui_box* Box) {
 
 	if (Rect2_Contains_V2(Box->Rect, MouseP)) {
 		Box->CurrentState |= UI_BOX_STATE_HOVERING;
+	}
 
-		if (Mouse_Is_Down(MOUSE_KEY_LEFT)) {
+	if (Box->CurrentState & UI_BOX_STATE_HOVERING) {
+		if (Mouse_Is_Pressed(MOUSE_KEY_LEFT)) {
 			Box->CurrentState |= UI_BOX_STATE_MOUSE_LEFT_DOWN;
-		}
+		} else {
+			if (Box->LastState & UI_BOX_STATE_MOUSE_LEFT_DOWN) {
+				if (Mouse_Is_Down(MOUSE_KEY_LEFT)) {
+					Box->CurrentState |= UI_BOX_STATE_MOUSE_LEFT_DOWN;
+				}
 
-		if (Mouse_Is_Down(MOUSE_KEY_MIDDLE)) {
-			Box->CurrentState |= UI_BOX_STATE_MOUSE_MIDDLE_DOWN;
-		}
-
-		if (Mouse_Is_Down(MOUSE_KEY_RIGHT)) {
-			Box->CurrentState |= UI_BOX_STATE_MOUSE_RIGHT_DOWN;
+				if (Mouse_Is_Released(MOUSE_KEY_LEFT)) {
+					Box->CurrentState |= UI_BOX_STATE_MOUSE_LEFT_CLICKED;
+				}
+			}
 		}
 	}
 

@@ -515,7 +515,7 @@ function JOB_CALLBACK_DEFINE(Win32_Update_Job) {
 	}
 }
 
-#ifdef USE_CONSOLE
+#ifndef USE_CONSOLE
 int WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine, int ShowCmd) {
 #else
 int main() {

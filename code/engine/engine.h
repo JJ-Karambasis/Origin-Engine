@@ -87,6 +87,7 @@ struct engine {
 	arena* 		   Arena;
 	base* 		   Base;
 	job_system*    JobSystem;
+	ui*            UI;
 	renderer       Renderer;
 	audio_manager  Audio;
 	input_manager  UpdateInput;
@@ -137,6 +138,7 @@ function inline void Set_Engine(engine* Engine) {
 	if (G_Engine) {
 		Base_Set(Engine->Base);
 		GDI_Set(Engine->Renderer.GDI);
+		UI_Set(Engine->UI);
 	}
 }
 

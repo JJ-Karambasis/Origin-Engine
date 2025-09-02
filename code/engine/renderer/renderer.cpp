@@ -476,7 +476,10 @@ function void Draw_UI_Box(gdi_render_pass* RenderPass, ui* UI, ui_box* Box) {
 		v4 BackgroundColor = Box->BackgroundColor;
 		if (Box->CurrentState & UI_BOX_STATE_HOVERING) {
 			v3 HSV = RGB_To_HSV(BackgroundColor.xyz);
-			HSV.y *= 0.5f;
+
+			f32 Multiplier = (Box->CurrentState & UI_BOX_STATE_MOUSE_LEFT_DOWN) ? 0.2f : 0.5f;
+			HSV.z *= Multiplier;
+
 			BackgroundColor.xyz = HSV_To_RGB(HSV);
 		}
 

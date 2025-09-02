@@ -49,8 +49,7 @@ enum {
 	UI_BOX_STATE_NONE = 0,
 	UI_BOX_STATE_HOVERING = (1 << 0),
 	UI_BOX_STATE_MOUSE_LEFT_DOWN = (1 << 1),
-	UI_BOX_STATE_MOUSE_MIDDLE_DOWN = (1 << 2),
-	UI_BOX_STATE_MOUSE_RIGHT_DOWN = (1 << 3)
+	UI_BOX_STATE_MOUSE_LEFT_CLICKED = (1 << 2)
 };
 typedef u64 ui_box_state;
 
@@ -95,7 +94,7 @@ struct ui_box {
 	u64 BuildIndex;
 };
 
-#define UI_LMB_Pressed(box) ((((box)->CurrentState & UI_BOX_STATE_MOUSE_LEFT_DOWN) == UI_BOX_STATE_MOUSE_LEFT_DOWN) && (((box)->LastState & UI_BOX_STATE_MOUSE_LEFT_DOWN) != UI_BOX_STATE_MOUSE_LEFT_DOWN))
+#define UI_LMB_Clicked(box) ((box)->CurrentState & UI_BOX_STATE_MOUSE_LEFT_CLICKED)
 
 struct ui_box_hash_slot {
 	ui_box* FirstBox;
@@ -121,6 +120,14 @@ struct ui {
 	ui_stack Stack;
 };
 
-function ui* UI_Get();
+
+global ui* G_UI;
+function inline void UI_Set(ui* UI) {
+	G_UI = UI;
+}
+
+function inline ui* UI_Get() {
+	return G_UI;
+}
 
 #endif

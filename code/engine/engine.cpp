@@ -56,7 +56,6 @@ function ENGINE_FUNCTION_DEFINE(Engine_Simulate_Impl) {
 	Sim_Begin_Frame();
 
 	Set_Input_Thread(&Engine->SimInput);
-	Input_Update();
 	Process_OS_Events(&Engine->SimOSEvents);
 
 	Sim_Process_Messages();
@@ -120,16 +119,9 @@ function ENGINE_FUNCTION_DEFINE(Engine_Simulate_Impl) {
 
 function ENGINE_FUNCTION_DEFINE(Engine_Update_Impl) {
 	Set_Input_Thread(&Engine->UpdateInput);
-	Input_Update();
 	Process_OS_Events(&Engine->UpdateOSEvents);
 
 	Sync_Simulation();
-
-	local u64 i = 0;
-	if (Mouse_Is_Pressed(MOUSE_KEY_LEFT)) {
-		Debug_Log("Down %d", i);
-		i++;
-	}
 
 	f32 dt = (f32)Engine->dt;
 
@@ -142,6 +134,7 @@ function ENGINE_FUNCTION_DEFINE(Engine_Update_Impl) {
 
 	UI_Set_Next_Fixed_Size(V2(500, 300));
 	UI_Set_Next_Layout_Axis(UI_AXIS_Y);
+
 	ui_box* Box = UI_Make_Box_From_String(0, String_Lit("Info Box"));
 	v2 P = V2(ViewInfo.Dim.x - Box->FixedDim.x, 0.0f);
 	UI_Set_Position(Box, P);
@@ -150,15 +143,18 @@ function ENGINE_FUNCTION_DEFINE(Engine_Update_Impl) {
 	UI_Set_Next_Text_Color(V4(1.0f, 1.0f, 0.0f, 1.0f));
 
 	UI_Text_Formatted(UI_BOX_FLAG_RIGHT_ALIGN, "FPS: %d", (int)(1.0 / dt));
+	
 	UI_Text_Formatted(UI_BOX_FLAG_RIGHT_ALIGN, "Is Simulating: %s", Is_Update_Simulating() ? "true" : "false");
 
+	UI_Set_Next_Background_Color(V4(0.5f, 0.5f, 0.5f, 1.0f));
 	UI_Text_Formatted(UI_BOX_FLAG_RIGHT_ALIGN, "Draw Colliders: %s###Button0", Engine->DrawColliders ? "true" : "false");
-	if (UI_LMB_Pressed(UI_Get_Last_Box())) {
+	if (UI_LMB_Clicked(UI_Get_Last_Box())) {
 		Engine->DrawColliders = !Engine->DrawColliders;
 	}
 
+	UI_Set_Next_Background_Color(V4(0.5f, 0.5f, 0.5f, 1.0f));
 	UI_Text_Formatted(UI_BOX_FLAG_RIGHT_ALIGN, "Use Debug Camera: %s###Button1", Engine->UseDebugCamera ? "true" : "false");
-	if (UI_LMB_Pressed(UI_Get_Last_Box())) {
+	if (UI_LMB_Clicked(UI_Get_Last_Box())) {
 		Engine->UseDebugCamera = !Engine->UseDebugCamera;
 	}
 
@@ -275,7 +271,10 @@ export_function ENGINE_FUNCTION_DEFINE(Engine_Initialize) {
 	Renderer_Init(&Engine->Renderer);
 	Audio_Init(&Engine->Audio);
 	Sim_Init(&Engine->Simulation);
+	Engine->UI = UI_Create();
 	Engine->World = World_Create(String_Lit("Default World"));
+
+	UI_Set(Engine->UI);
 
 	Create_Dir_Light( {
 		.Name = String_Lit("Directional Light A"),
