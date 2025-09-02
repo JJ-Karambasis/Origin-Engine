@@ -29,9 +29,11 @@ function inline void Time_Increment(high_res_time* Time, f64 dt) {
 typedef pool_id entity_id;
 enum entity_type {
 	ENTITY_TYPE_STATIC,
-	ENTITY_TYPE_PLAYER
+	ENTITY_TYPE_PLAYER,
+	ENTITY_TYPE_DIR_LIGHT
 };
 
+#include "camera.h"
 #include "audio/audio.h"
 #include "renderer/renderer.h"
 #include "mesh.h"
@@ -39,7 +41,6 @@ enum entity_type {
 #include "world/world.h"
 
 #include "accumulator_loop.h"
-#include "camera.h"
 #include "font.h"
 #include "os/os_events.h"
 #include "ui/ui.h"
@@ -114,6 +115,9 @@ struct engine {
 #endif
 
 	camera Camera;
+	camera DebugCamera;
+	b32    UseDebugCamera;
+	
 
 	atomic_b32 IsRunning;
 };

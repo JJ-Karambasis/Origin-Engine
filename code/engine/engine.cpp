@@ -132,8 +132,6 @@ function ENGINE_FUNCTION_DEFINE(Engine_Update_Impl) {
 	}
 
 	f32 dt = (f32)Engine->dt;
-	camera* Camera = &Engine->Camera;
-	Camera_Move_Arcball(Camera, dt);
 
 	gdi_swapchain_info ViewInfo = Get_View_Info();
 
@@ -155,26 +153,33 @@ function ENGINE_FUNCTION_DEFINE(Engine_Update_Impl) {
 	UI_Text_Formatted(UI_BOX_FLAG_RIGHT_ALIGN, "Is Simulating: %s", Is_Update_Simulating() ? "true" : "false");
 
 	UI_Text_Formatted(UI_BOX_FLAG_RIGHT_ALIGN, "Draw Colliders: %s###Button0", Engine->DrawColliders ? "true" : "false");
-	
 	if (UI_LMB_Pressed(UI_Get_Last_Box())) {
 		Engine->DrawColliders = !Engine->DrawColliders;
+	}
+
+	UI_Text_Formatted(UI_BOX_FLAG_RIGHT_ALIGN, "Use Debug Camera: %s###Button1", Engine->UseDebugCamera ? "true" : "false");
+	if (UI_LMB_Pressed(UI_Get_Last_Box())) {
+		Engine->UseDebugCamera = !Engine->UseDebugCamera;
 	}
 
 	UI_Pop_Parent();
 	UI_Pop_Font();
 
-	UI_Texture(1024, 1024, Engine->Renderer.ShadowMap);
-
-	UI_End();
-
 	world* World = World_Get();
+	camera* Camera = Engine->UseDebugCamera ? &Engine->DebugCamera : &Engine->Camera;
+	Camera_Move_Arcball(Camera, dt);
+
 	for (pool_iter Iter = Pool_Begin_Iter(&World->Entities); Iter.IsValid; Pool_Iter_Next(&Iter)) {
 		entity* Entity = (entity*)Iter.Data;
+
 		if (Entity->Type == ENTITY_TYPE_PLAYER) {
-			Camera->Target = Entity->Position;
+			Engine->Camera.Target = Entity->Position;
 		}
+
 		gfx_component* Component = Get_GFX_Component(Entity->GfxComponent);
-		Component->Transform = M4_Affine_Transform_Quat(Entity->Position, Entity->Orientation, Entity->Scale);
+		if (Component) {
+			Component->Transform = M4_Affine_Transform_Quat(Entity->Position, Entity->Orientation, Entity->Scale);
+		}
 	}
 
 	if (Engine->DrawColliders) {
@@ -212,13 +217,40 @@ function ENGINE_FUNCTION_DEFINE(Engine_Update_Impl) {
 	}
 #endif
 
-	dir_light* DirLight = &Engine->Renderer.DirLight;
-	DirLight->Orientation = Quat_RotX(To_Radians(-45.0f));
-	DirLight->Intensity = 1.0f;
-	DirLight->Color = V3(1.0f, 1.0f, 1.0f);
-	DirLight->IsOn = true;
+	size_t DirLightCount = 0;
+	for (pool_iter Iter = Pool_Begin_Iter(&World->Entities); Iter.IsValid; Pool_Iter_Next(&Iter)) {
+		entity* Entity = (entity*)Iter.Data;
+		if (Entity->Type == ENTITY_TYPE_DIR_LIGHT && Entity->IsOn) {
+			UI_Texture(1024, 1024, Entity->ShadowMap.Texture);
+			DirLightCount++;
+		}
+	}
 
-	Render_Frame(&Engine->Renderer, Camera);
+	arena* Scratch = Scratch_Get();
+	dir_light* DirLights = Arena_Push_Array(Scratch, DirLightCount, dir_light);
+	
+	DirLightCount = 0;
+	for (pool_iter Iter = Pool_Begin_Iter(&World->Entities); Iter.IsValid; Pool_Iter_Next(&Iter)) {
+		entity* Entity = (entity*)Iter.Data;
+		if (Entity->Type == ENTITY_TYPE_DIR_LIGHT && Entity->IsOn) {
+			DirLights[DirLightCount] = {
+				.Orientation = Entity->Orientation,
+				.Color = Entity->Color,
+				.ShadowMap = Entity->ShadowMap
+			};
+			DirLightCount++;
+		}
+	}
+
+	UI_End();
+
+	Render_Frame(&Engine->Renderer, {
+		.CameraView = Engine->UseDebugCamera ? Engine->DebugCamera : Engine->Camera,
+		.DirLights = { DirLights, DirLightCount }
+	});
+	Scratch_Release();
+
+
 	return true;
 }
 
@@ -244,6 +276,11 @@ export_function ENGINE_FUNCTION_DEFINE(Engine_Initialize) {
 	Audio_Init(&Engine->Audio);
 	Sim_Init(&Engine->Simulation);
 	Engine->World = World_Create(String_Lit("Default World"));
+
+	Create_Dir_Light( {
+		.Name = String_Lit("Directional Light A"),
+		.Orientation = Quat_RotX(-To_Radians(45.0f))
+	});
 
 	Create_Entity({
 		.Name = String_Lit("Entity A"),
@@ -355,6 +392,13 @@ export_function ENGINE_FUNCTION_DEFINE(Engine_Initialize) {
 	});
 
 	Camera_Init(&Engine->Camera, V3_Zero());
+	Camera_Init(&Engine->DebugCamera, V3_Zero());
+
+	Engine->DebugCamera.Pitch = To_Radians(45.0f);
+	Engine->DebugCamera.Roll = -To_Radians(45.0f);
+	Engine->DebugCamera.Distance = 20.0f;
+
+	Engine->UseDebugCamera = true;
 
 	Engine->UpdateInput.MouseP = V2(FLT_MAX, FLT_MAX);
 	Engine->SimInput.MouseP = V2(FLT_MAX, FLT_MAX);

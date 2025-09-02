@@ -545,6 +545,24 @@ function shader* Get_Shader(string ShaderName) {
 	return Shader;
 }
 
+function gfx_shadow_map Create_Shadow_Map(v2i Resolution, string DebugName) {
+	arena* Scratch = Scratch_Get();
+	gfx_texture_id Texture = Create_GFX_Texture({
+		.Dim = Resolution,
+		.Format = GDI_FORMAT_D32_FLOAT,
+		.Usage = GDI_TEXTURE_USAGE_DEPTH|GDI_TEXTURE_USAGE_SAMPLED,
+		.DebugName = String_Concat((allocator*)Scratch, DebugName, String_Lit(" Shadow Map"))
+	});
+
+	gfx_shadow_map Result = {
+		.Texture = Texture,
+		.Dim = Resolution,
+		.ShaderData = Create_Shader_Data(shader_sizeof(shadow_shader_data), 1, String_Concat((allocator*)Scratch, DebugName, String_Lit(" Shadow Map Shader Data")))
+	};
+	Scratch_Release();
+	return Result;
+}
+
 function b32 Hot_Reload_Shaders() {
 	renderer* Renderer = Renderer_Get();
 	shader_manager* ShaderManager = &Renderer->ShaderManager;
@@ -867,18 +885,11 @@ function b32 Renderer_Init(renderer* Renderer) {
 
 	//Shadow map
 	{
-		Renderer->ShadowMap = Create_GFX_Texture( {
-			.Dim = V2i(1024, 1024),
-			.Format = GDI_FORMAT_D32_FLOAT,
-			.Usage = GDI_TEXTURE_USAGE_DEPTH|GDI_TEXTURE_USAGE_SAMPLED,
-			.DebugName = String_Lit("Shadow Map")
-		});
-		if (Slot_Is_Null(Renderer->ShadowMap)) return false;
-
 		Renderer->ShadowSampler = Create_GFX_Sampler({
-			.Filter = GDI_FILTER_LINEAR,
+			.Filter = GDI_FILTER_NEAREST,
 			.AddressModeU = GDI_ADDRESS_MODE_BORDER,
-			.AddressModeV = GDI_ADDRESS_MODE_BORDER
+			.AddressModeV = GDI_ADDRESS_MODE_BORDER,
+			.DebugName = String_Lit("Shadow Sampler")
 		});
 		if (Slot_Is_Null(Renderer->ShadowSampler)) return false;
 	}
@@ -899,7 +910,6 @@ function b32 Renderer_Init(renderer* Renderer) {
 
 		ShaderManager->EntityShaderData = Create_Shader_Data(shader_sizeof(entity_shader_data), 1, String_Lit("Entity Shader Data"));
 		ShaderManager->EntityData = Create_Shader_Data(shader_sizeof(entity_data), MAX_ENTITY_DATA, String_Lit("Entity Data"));
-		ShaderManager->ShadowShaderData = Create_Shader_Data(shader_sizeof(shadow_shader_data), 1, String_Lit("Shadow Shader Data"));
 		ShaderManager->UIShaderData = Create_Shader_Data(shader_sizeof(ui_shader_data), 1, String_Lit("UI Shader Data"));
 	}
 
@@ -914,20 +924,36 @@ function b32 Renderer_Init(renderer* Renderer) {
 	return true;
 }
 
+function void Update_Shadow_Data(render_context* Context) {
+	for (size_t i = 0; i < Context->DirLightCount; i++) {
+		dir_light* DirLight = Context->DirLights + i;
+		if (Get_GFX_Texture(DirLight->ShadowMap.Texture)) {
+			shadow_shader_data* ShaderData = (shadow_shader_data*)GDI_Map_Buffer(DirLight->ShadowMap.ShaderData.Buffer);
+			ShaderData->WorldToClip = M4_Transpose(&Context->WorldToClipLights[i]);
+			GDI_Unmap_Buffer(DirLight->ShadowMap.ShaderData.Buffer);
+		}
+	}
+}
+
 function void Update_Entity_Data(render_context* Context) {
 	renderer* Renderer = Renderer_Get();
 	shader_manager* ShaderManager = &Renderer->ShaderManager;
 
 	entity_shader_data* ShaderData = (entity_shader_data*)GDI_Map_Buffer(ShaderManager->EntityShaderData.Buffer);
 	ShaderData->WorldToClip = M4_Transpose(&Context->WorldToClip);
-	ShaderData->DirLight = {
-		.Dir = V4_From_V3(Quat_Rotate(DEFAULT_LIGHT_DIR, Context->DirLight.Orientation), 0.0f),
-		.Color = V4_From_V3(V3_Mul_S(Context->DirLight.Color, Context->DirLight.Intensity), 1.0f),
-		.WorldToClipLight = M4_Transpose(&Context->WorldToClipLight)
-	};
-	ShaderData->ShadowMapIndex = Renderer->ShadowMap.Index;
-	ShaderData->ShadowSamplerIndex = Renderer->ShadowSampler.Index;
+	ShaderData->DirLightCount = Context->DirLightCount;
+	for (size_t i = 0; i < Context->DirLightCount; i++) {
+		dir_light* DirLight = Context->DirLights + i;
 
+		s32 ShadowMapIndex = DirLight->ShadowMap.Texture.Index;
+		if (!Get_GFX_Texture(DirLight->ShadowMap.Texture)) {
+			ShadowMapIndex = -1;
+		}
+
+		ShaderData->DirLights[i].Dir = V4_From_V3(Quat_Rotate(DEFAULT_LIGHT_DIR, DirLight->Orientation), S32_To_F32_Bits(ShadowMapIndex));
+		ShaderData->DirLights[i].Color = V4_From_V3(DirLight->Color, S32_To_F32_Bits(Renderer->ShadowSampler.Index));
+		ShaderData->DirLights[i].WorldToClipLight = M4_Transpose(&Context->WorldToClipLights[i]);
+	}
 	GDI_Unmap_Buffer(ShaderManager->EntityShaderData.Buffer);
 
 	entity_data* EntityData = (entity_data*)GDI_Map_Buffer(ShaderManager->EntityData.Buffer);
@@ -961,8 +987,12 @@ function void Update_Entity_Data(render_context* Context) {
 	GDI_Unmap_Buffer(ShaderManager->EntityData.Buffer);
 }
 
-function b32 Render_Frame(renderer* Renderer, camera* CameraView) {
+function b32 Render_Frame(renderer* Renderer, const render_frame_info& FrameInfo) {
+	Assert(FrameInfo.DirLights.Count < MAX_DIR_LIGHTS);
+	
 	if (!Hot_Reload_Shaders()) return false;
+
+	camera CameraView = FrameInfo.CameraView;
 
 	shader_manager* ShaderManager = &Renderer->ShaderManager;
 
@@ -984,76 +1014,100 @@ function b32 Render_Frame(renderer* Renderer, camera* CameraView) {
 		Renderer->LastDim = ViewDim;
 	}
 
-	m4_affine WorldToView = Camera_Get_View(CameraView);
-	m4 ViewToClip = M4_Perspective(CameraView->FieldOfView, ViewDim.x / ViewDim.y, CameraView->ZNear, CameraView->ZFar);
+	m4_affine WorldToView = Camera_Get_View(&CameraView);
+	m4 ViewToClip = Camera_Get_Perspective(&CameraView, ViewDim.x / ViewDim.y, 0.1f, 1000.0f);
 	m4 WorldToClip = M4_Affine_Mul_M4(&WorldToView, &ViewToClip);
 
 	render_context RenderContext = {
 		.ViewDim = ViewDim,
 		.WorldToView = WorldToView,
 		.ViewToClip = ViewToClip,
-		.WorldToClip = WorldToClip
+		.WorldToClip = WorldToClip,
+		.DirLightCount = (u32)FrameInfo.DirLights.Count
 	};
+	Memory_Copy(&RenderContext.DirLights, FrameInfo.DirLights.Ptr, sizeof(dir_light)*FrameInfo.DirLights.Count);
+	
+	camera_frustum CameraFrustum = Camera_Get_Frustum(&CameraView, ViewDim.x / ViewDim.y, 0.1f, 50.0f);
 
-	dir_light* DirLight = &Renderer->DirLight;
-	if (DirLight->IsOn) {
-		RenderContext.DirLight = *DirLight;
+	v3 CameraFrustumCenter = V3_Zero();
+	for (size_t j = 0; j < Array_Count(CameraFrustum.P); j++) {
+		CameraFrustumCenter = V3_Add_V3(CameraFrustumCenter, CameraFrustum.P[j]);
+	}
+	CameraFrustumCenter = V3_Div_S(CameraFrustumCenter, 8.0f);
+	f32 FrustumRadius = V3_Mag(V3_Sub_V3(CameraFrustum.P[0], CameraFrustum.P[6]))*0.5f;
+	
+	for (size_t i = 0; i < RenderContext.DirLightCount; i++) {
+		dir_light* DirLight = RenderContext.DirLights + i;
+		f32 TxlPerUnit = DirLight->ShadowMap.Dim.x / (FrustumRadius * 2.0f);
+		v3 FrustumCenter = CameraFrustumCenter;
 
-		//World to clip calculate on the directional light for shadows
-		f32 LightDistance = 20.0f;
-		f32 BoxSize = 50.0f;
+		m3 ScalarM3 = M3_Scale(V3_All(TxlPerUnit));
+		m4_affine Scalar = M4_Affine_From_M3(&ScalarM3);
 
-		v3 LightDirection = Quat_Rotate(DEFAULT_LIGHT_DIR, DirLight->Orientation);
-		v3 LightPosition = V3_Mul_S(LightDirection, -LightDistance);
+		v3 Zero = V3_Zero();
+		v3 LightDir = Quat_Rotate(DEFAULT_LIGHT_DIR, DirLight->Orientation);
 
-		m4_affine View = M4_Affine_Inverse_Transform_Quat_No_Scale(LightPosition, DirLight->Orientation);
-		m4 Projection = M4_Orthographic(-BoxSize, BoxSize, -BoxSize, BoxSize, -BoxSize, BoxSize);
+		m4_affine LookAt, LookAtInv;
+		LookAt = M4_Affine_Look_At(V3_Zero(), V3_Negate(LightDir));
+		LookAt = M4_Affine_Mul_M4_Affine(&LookAt, &Scalar);
+		LookAtInv = M4_Affine_Inverse(&LookAt);
 
-		RenderContext.WorldToClipLight = M4_Affine_Mul_M4(&View, &Projection);
+		FrustumCenter = V4_Mul_M4_Affine(V4_From_V3(FrustumCenter, 1.0f), &LookAt);
+		FrustumCenter.x = Floor_F32(FrustumCenter.x);
+		FrustumCenter.y = Floor_F32(FrustumCenter.y);
+		FrustumCenter = V4_Mul_M4_Affine(V4_From_V3(FrustumCenter, 1.0f), &LookAtInv);
 
-		shadow_shader_data* ShaderData = (shadow_shader_data*)GDI_Map_Buffer(ShaderManager->ShadowShaderData.Buffer);
-		ShaderData->WorldToClip = M4_Transpose(&RenderContext.WorldToClipLight);
-		GDI_Unmap_Buffer(ShaderManager->ShadowShaderData.Buffer);
+		v3 Eye = V3_Sub_V3(FrustumCenter, V3_Mul_S(LightDir, FrustumRadius * 2.0f));
+		m4_affine WorldToLight = M4_Affine_Look_At(Eye, FrustumCenter);
+
+		m4 LightToClip = M4_Orthographic(-FrustumRadius, FrustumRadius, -FrustumRadius, FrustumRadius, -FrustumRadius*6.0f, FrustumRadius*6.0f);
+		RenderContext.WorldToClipLights[i] = M4_Affine_Mul_M4(&WorldToLight, &LightToClip);
 	}
 
+	Update_Shadow_Data(&RenderContext);
 	Update_Entity_Data(&RenderContext);
 
 	//Shadow pass
 	{
-		gfx_texture* ShadowMap = Get_GFX_Texture(Renderer->ShadowMap);
-		gdi_render_pass_begin_info RenderPassInfo = {
-			.DepthBufferView = ShadowMap->View,
-			.ClearDepth = {
-				.ShouldClear = true,
-				.Depth = 1.0f
-			}
-		};
-
-		gdi_render_pass* RenderPass = GDI_Begin_Render_Pass(&RenderPassInfo);
-		Render_Set_Shader(RenderPass, ShaderManager->ShadowShader);
-
-		gdi_handle BindGroups[] = {
-			ShaderManager->ShadowShaderData.BindGroup,
-			ShaderManager->EntityData.BindGroup
-		};
-		Render_Set_Bind_Groups(RenderPass, 0, BindGroups, Array_Count(BindGroups));
-
-		s32 EntityIndex = 0;
-		for (pool_iter Iter = Pool_Begin_Iter(&Renderer->GfxComponents); Iter.IsValid; Pool_Iter_Next(&Iter)) {
-			gfx_component* Component = (gfx_component*)Iter.Data;
-			gfx_mesh* Mesh = Get_GFX_Mesh(Component->Mesh);
-			if (Mesh) {
-				entity_draw_data DrawData = {
-					.EntityIndex = EntityIndex
+		for (size_t i = 0; i < RenderContext.DirLightCount; i++) {
+			dir_light* DirLight = RenderContext.DirLights + i;
+			gfx_texture* ShadowMap = Get_GFX_Texture(DirLight->ShadowMap.Texture);
+			if (ShadowMap) {
+				gdi_render_pass_begin_info RenderPassInfo = {
+					.DepthBufferView = ShadowMap->View,
+					.ClearDepth = {
+						.ShouldClear = true,
+						.Depth = 1.0f
+					}
 				};
-				Render_Set_Push_Constants(RenderPass, &DrawData, sizeof(entity_draw_data));
-				Draw_Mesh(RenderPass, Mesh, true);
-				EntityIndex++;
+
+				gdi_render_pass* RenderPass = GDI_Begin_Render_Pass(&RenderPassInfo);
+				Render_Set_Shader(RenderPass, ShaderManager->ShadowShader);
+
+				gdi_handle BindGroups[] = {
+					DirLight->ShadowMap.ShaderData.BindGroup,
+					ShaderManager->EntityData.BindGroup
+				};
+				Render_Set_Bind_Groups(RenderPass, 0, BindGroups, Array_Count(BindGroups));
+
+				s32 EntityIndex = 0;
+				for (pool_iter Iter = Pool_Begin_Iter(&Renderer->GfxComponents); Iter.IsValid; Pool_Iter_Next(&Iter)) {
+					gfx_component* Component = (gfx_component*)Iter.Data;
+					gfx_mesh* Mesh = Get_GFX_Mesh(Component->Mesh);
+					if (Mesh) {
+						entity_draw_data DrawData = {
+							.EntityIndex = EntityIndex
+						};
+						Render_Set_Push_Constants(RenderPass, &DrawData, sizeof(entity_draw_data));
+						Draw_Mesh(RenderPass, Mesh, true);
+						EntityIndex++;
+					}
+				}
+
+				GDI_End_Render_Pass(RenderPass);
+				GDI_Submit_Render_Pass(RenderPass);
 			}
 		}
-
-		GDI_End_Render_Pass(RenderPass);
-		GDI_Submit_Render_Pass(RenderPass);
 	}
 
 	//Entity pass

@@ -2,10 +2,8 @@ function inline world* World_Get() {
 	return Get_Engine()->World;
 }
 
-function entity_id Create_Entity(const entity_create_info& CreateInfo) {
+function entity_slot* Get_Entity_Slot(string Name, u64 EntityHash) {
 	world* World = World_Get();
-
-	u64 EntityHash = U64_Hash_String(CreateInfo.Name);
 	entity_slot* EntitySlot = NULL;
 	{
 		u64 SlotIndex = (EntityHash  & ENTITY_SLOT_MASK);
@@ -13,10 +11,43 @@ function entity_id Create_Entity(const entity_create_info& CreateInfo) {
 		for (entity* HashEntry = EntitySlot->First; HashEntry; HashEntry = HashEntry->Next) {
 			if (HashEntry->Hash == EntityHash) {
 				Debug_Log("Duplicate entity names");
-				return Empty_Pool_ID();
+				return NULL;
 			}
 		}
 	}
+	return EntitySlot;
+}
+
+function entity_id Create_Dir_Light(const dir_light_create_info& CreateInfo) {
+	world* World = World_Get();
+
+	u64 EntityHash = U64_Hash_String(CreateInfo.Name);
+	entity_slot* EntitySlot = Get_Entity_Slot(CreateInfo.Name, EntityHash);
+	if(!EntitySlot) return Empty_Pool_ID();
+
+	entity_id ID = (entity_id)Pool_Allocate(&World->Entities);
+	entity* Entity = (entity*)Pool_Get(&World->Entities, ID);
+
+	Entity->ID = ID;
+	Entity->Name = String_Copy((allocator*)World->Heap, CreateInfo.Name);
+	Entity->Hash = EntityHash;
+	Entity->Type = ENTITY_TYPE_DIR_LIGHT;
+
+	Entity->Orientation = CreateInfo.Orientation;
+	Entity->IsOn = CreateInfo.IsOn;
+	Entity->Color = V3_Mul_S(CreateInfo.Color, CreateInfo.Intensity);
+	Entity->ShadowMap = Create_Shadow_Map(V2i(1024, 1024), CreateInfo.Name);
+
+	DLL_Push_Back(EntitySlot->First, EntitySlot->Last, Entity);
+	return ID;
+}
+
+function entity_id Create_Entity(const entity_create_info& CreateInfo) {
+	world* World = World_Get();
+
+	u64 EntityHash = U64_Hash_String(CreateInfo.Name);
+	entity_slot* EntitySlot = Get_Entity_Slot(CreateInfo.Name, EntityHash);
+	if(!EntitySlot) return Empty_Pool_ID();
 
 	entity_id ID = (entity_id)Pool_Allocate(&World->Entities);
 	entity* Entity = (entity*)Pool_Get(&World->Entities, ID);

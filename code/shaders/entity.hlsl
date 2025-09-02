@@ -33,7 +33,7 @@ vs_output VS_Main(vs_input Input) {
 	return Result;
 }
 
-f32 Calculate_Shadow(v4 LightSpaceP, f32 Bias) {
+f32 Calculate_Shadow(v4 LightSpaceP, f32 Bias, s32 ShadowMapIndex, s32 ShadowSamplerIndex) {
 	v3 ProjCoords = LightSpaceP.xyz / LightSpaceP.w;
 	ProjCoords.x = ProjCoords.x * 0.5f + 0.5f;
 	ProjCoords.y = -ProjCoords.y * 0.5f + 0.5f;
@@ -46,7 +46,7 @@ f32 Calculate_Shadow(v4 LightSpaceP, f32 Bias) {
 	}
 
 	f32 CurrentDepth = ProjCoords.z;
-	f32 ShadowDepth = Textures[ShaderData.ShadowMapIndex].Sample(Samplers[ShaderData.ShadowSamplerIndex], ProjCoords.xy).r;
+	f32 ShadowDepth = Textures[ShadowMapIndex].Sample(Samplers[ShadowSamplerIndex], ProjCoords.xy).r;
 	return (CurrentDepth - Bias) > ShadowDepth ? 1.0f : 0.0f;
 }
 
@@ -55,9 +55,6 @@ v4 PS_Main(vs_output Pxl) : SV_TARGET0 {
 	int SamplerIndex = asuint(Entity.FlagsPacking.x);
 	int DiffuseIsTexture = asuint(Entity.DiffusePacking.x);
 	
-	v3 LightColor = ShaderData.DirLight.Color.xyz;
-	v3 LightDirection = ShaderData.DirLight.Dir.xyz;
-
 	v3 Diffuse = v3(0, 0, 0);
 	if (DiffuseIsTexture) {
 		int DiffuseIndex = asuint(Entity.DiffusePacking.y);
@@ -66,16 +63,30 @@ v4 PS_Main(vs_output Pxl) : SV_TARGET0 {
 		Diffuse = Entity.DiffusePacking.yzw;
 	}
 
-	v3 l = -normalize(LightDirection);
 	v3 n = normalize(Pxl.N);
 
-	v3 DirectLight = LightColor * Diffuse * saturate(dot(n, l));
+	v3 DirectLight = v3(0, 0, 0);
+
+	for (s32 i = 0; i < ShaderData.DirLightCount; i++) {
+		shader_dir_light DirLight = ShaderData.DirLights[i];
+		
+		v3 l = -normalize(DirLight.Dir.xyz);
+		v3 LightValue = DirLight.Color.xyz * Diffuse * saturate(dot(n, l));
+
+		v4 LightSpaceP = mul(v4(Pxl.WorldP, 1.0f), DirLight.WorldToClipLight);
+		f32 Shadow = 0.0f;
+
+		s32 ShadowMapIndex = asuint(DirLight.Dir.w);
+		s32 ShadowSamplerIndex = asuint(DirLight.Color.w);
+		if (ShadowMapIndex != -1 && ShadowSamplerIndex != -1) {
+			Shadow = Calculate_Shadow(LightSpaceP, 1e-3f, ShadowMapIndex, ShadowSamplerIndex);
+		}
+		
+		DirectLight += (1.0f - Shadow)*LightValue;
+	}
+
 	v3 AmbientLight = Diffuse * 0.03f;
-
-	v4 LightSpaceP = mul(v4(Pxl.WorldP, 1.0f), ShaderData.DirLight.WorldToClipLight);
-	f32 Shadow = Calculate_Shadow(LightSpaceP, 1e-4f);
-
-	v3 FinalLight = AmbientLight + ((1.0f-Shadow)*DirectLight);
+	v3 FinalLight = DirectLight + AmbientLight;
 
 	return v4(FinalLight, 1.0f);
 }

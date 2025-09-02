@@ -146,7 +146,6 @@ struct shader_manager {
 	gdi_handle EntityShader;
 
 	//Shadow
-	shader_data ShadowShaderData;
 	gdi_handle ShadowShader;
 
 	//UI
@@ -157,12 +156,24 @@ struct shader_manager {
 	gdi_handle LinearizeDepthShader;
 };
 
+struct gfx_shadow_map {
+	gfx_texture_id Texture;
+	v2i 		   Dim;
+	shader_data    ShaderData;
+};
+
 #define DEFAULT_LIGHT_DIR V3(0.0f, 0.0f, -1.0f)
 struct dir_light {
-	quat Orientation;
-	f32  Intensity;
-	v3   Color;
-	b32  IsOn;
+	quat 		   Orientation;
+	v3   		   Color;
+	gfx_shadow_map ShadowMap;
+};
+
+Array_Define(dir_light);
+
+struct render_frame_info {
+	camera 			CameraView;
+	span<dir_light> DirLights;
 };
 
 struct render_context {
@@ -170,9 +181,9 @@ struct render_context {
 	m4_affine WorldToView;
 	m4 		  ViewToClip;
 	m4 		  WorldToClip;
-
-	dir_light DirLight;
-	m4 WorldToClipLight;
+	u32 	  DirLightCount;
+	dir_light DirLights[MAX_DIR_LIGHTS];
+	m4 		  WorldToClipLights[MAX_DIR_LIGHTS];
 };
 
 #include "draw.h"
@@ -190,7 +201,6 @@ struct renderer {
 	gfx_texture_id DepthBuffer;
 
 	gfx_sampler_id ShadowSampler;
-	gfx_texture_id ShadowMap;
 
 	gfx_sampler_id DefaultSampler;
 	gfx_texture_id WhiteTexture;
@@ -212,5 +222,5 @@ struct editable_mesh;
 function gfx_mesh_id Create_GFX_Mesh(editable_mesh* EditableMesh, string DebugName);
 function gfx_component_id Create_GFX_Component(const gfx_component_create_info& CreateInfo);
 function gfx_texture_id Create_GFX_Texture(const gfx_texture_create_info& CreateInfo);
-
+function gfx_shadow_map Create_Shadow_Map(v2i Resolution, string DebugName);
 #endif

@@ -12,4 +12,8 @@ typedef struct {
 	f32 ZFar;
 } camera;
 
+struct camera_frustum {
+	v3 P[8];
+};
+
 #endif

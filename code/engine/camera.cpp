@@ -25,10 +25,22 @@ function v3 Camera_Get_Position(camera* Camera) {
 	return Position;
 }
 
+function m4_affine Camera_Get_Transform(camera* Camera) {
+	m3 Orientation = Camera_Get_Orientation(Camera);
+	v3 Position = V3_Add_V3(Camera->Target, V3_Mul_S(Orientation.z, Camera->Distance));
+	m4_affine Result = M4_Affine_Transform_No_Scale(Position, &Orientation);
+	return Result;
+}
+
 function m4_affine Camera_Get_View(camera* Camera) {
 	m3 Orientation = Camera_Get_Orientation(Camera);
 	v3 Position = V3_Add_V3(Camera->Target, V3_Mul_S(Orientation.z, Camera->Distance));
 	m4_affine Result = M4_Affine_Inverse_Transform_No_Scale(Position, &Orientation);
+	return Result;
+}
+
+function inline m4 Camera_Get_Perspective(camera* Camera, f32 AspectRatio, f32 Near, f32 Far) {
+	m4 Result = M4_Perspective(Camera->FieldOfView, AspectRatio, Near, Far);
 	return Result;
 }
 
@@ -52,4 +64,32 @@ function void Camera_Move_Arcball(camera* Camera, f32 dt) {
 	if (InputManager->MouseZoom != 0) {
 		Camera->Distance = Max(Camera->Distance-(InputManager->MouseZoom * dt * 100), 1e-4f);
 	}
+}
+
+function camera_frustum Camera_Get_Frustum(camera* Camera, f32 AspectRatio, f32 Near, f32 Far) {
+	m4_affine ViewToWorld = Camera_Get_Transform(Camera);
+	m4 ClipToView  = M4_Inverse_Perspective(Camera->FieldOfView, AspectRatio, Near, Far);
+
+	m4 ClipToWorld = M4_Mul_M4_Affine(&ClipToView, &ViewToWorld);
+
+	v4 CameraFrustumP[] = {
+		V4(-1.0f, -1.0f, 0.0f, 1.0f),
+		V4(1.0f, -1.0f, 0.0f, 1.0f),
+		V4(1.0f, 1.0f, 0.0f, 1.0f),
+		V4(-1.0f, 1.0f, 0.0f, 1.0f),
+
+		V4(-1.0f, -1.0f, 1.0f, 1.0f),
+		V4(1.0f, -1.0f, 1.0f, 1.0f),
+		V4(1.0f, 1.0f, 1.0f, 1.0f),
+		V4(-1.0f, 1.0f, 1.0f, 1.0f)
+	};
+
+	camera_frustum Result = {};
+
+	for (size_t j = 0; j < Array_Count(CameraFrustumP); j++) {
+		CameraFrustumP[j] = V4_Mul_M4(CameraFrustumP[j], &ClipToWorld);
+		Result.P[j] = V3_Div_S(CameraFrustumP[j].xyz, CameraFrustumP[j].w);
+	}
+
+	return Result;
 }

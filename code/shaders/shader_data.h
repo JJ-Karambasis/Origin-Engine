@@ -4,6 +4,7 @@
 #define MAX_BINDLESS_TEXTURES (4096)
 #define MAX_BINDLESS_SAMPLERS (16)
 #define MAX_ENTITY_DATA (4096)
+#define MAX_DIR_LIGHTS 8
 
 struct basic_shader_data {
 	m4 ModelToClip;
@@ -11,16 +12,15 @@ struct basic_shader_data {
 };
 
 struct shader_dir_light {
-	v4 Dir; //xyz stores direction
-	v4 Color; //xyz stores color
+	v4 Dir; //xyz stores direction, z stores the shadow map index (-1 if it doesn't have one)
+	v4 Color; //xyz stores color, z stores the sampler index (-1 if it doesn't have one)
 	m4 WorldToClipLight;
 };
 
 struct entity_shader_data {
 	m4 				 WorldToClip;
-	shader_dir_light DirLight;
-	s32 			 ShadowMapIndex;
-	s32 			 ShadowSamplerIndex;
+	shader_dir_light DirLights[MAX_DIR_LIGHTS];
+	s32 			 DirLightCount;
 };
 
 struct entity_data {
